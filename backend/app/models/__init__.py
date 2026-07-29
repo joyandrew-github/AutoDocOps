@@ -17,6 +17,7 @@ from app.models.parser import (
     Export,
     Variable,
     Comment,
+    FileParseStatus,
 )
 
 __all__ = [
@@ -36,4 +37,5 @@ __all__ = [
     "Export",
     "Variable",
     "Comment",
+    "FileParseStatus",
 ]

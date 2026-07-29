@@ -10,6 +10,7 @@ from app.models.parser import (
     Export,
     Variable,
     Comment,
+    FileParseStatus,
 )
 
 
@@ -43,6 +44,57 @@ class ParserRepository:
             .order_by(desc(ParserRun.created_at))
             .first()
         )
+
+    def get_latest_completed_parser_run(self, repository_id: int) -> ParserRun | None:
+        return (
+            self.db.query(ParserRun)
+            .filter(ParserRun.repository_id == repository_id, ParserRun.status == "completed")
+            .order_by(desc(ParserRun.created_at))
+            .first()
+        )
+
+    def get_file_checksums_by_parser_run(self, parser_run_id: int) -> dict[int, str]:
+        """Get a mapping of file_id to checksum for a parser run."""
+        rows = (
+            self.db.query(FileParseStatus.file_id, FileParseStatus.checksum)
+            .filter(FileParseStatus.parser_run_id == parser_run_id, FileParseStatus.status == "parsed")
+            .all()
+        )
+        return {row[0]: row[1] for row in rows if row[1]}
+
+    def create_file_parse_status(
+        self,
+        parser_run_id: int,
+        file_id: int,
+        status: str,
+        checksum: str | None = None,
+        previous_checksum: str | None = None,
+        error_message: str | None = None,
+        nodes_extracted: int = 0,
+        parsed_at = None,
+    ) -> FileParseStatus:
+        file_status = FileParseStatus(
+            parser_run_id=parser_run_id,
+            file_id=file_id,
+            status=status,
+            checksum=checksum,
+            previous_checksum=previous_checksum,
+            error_message=error_message,
+            nodes_extracted=nodes_extracted,
+            parsed_at=parsed_at,
+        )
+        self.db.add(file_status)
+        self.db.commit()
+        self.db.refresh(file_status)
+        return file_status
+
+    def delete_nodes_by_file_and_run(self, file_id: int, parser_run_id: int) -> None:
+        """Delete AST nodes for a specific file and parser run (for stale record cleanup)."""
+        self.db.query(ASTNode).filter(
+            ASTNode.file_id == file_id,
+            ASTNode.parser_run_id == parser_run_id,
+        ).delete()
+        self.db.commit()
 
     # --- Bulk inserts ---
 

@@ -7,7 +7,7 @@ from app.engines.parser_engine.parser_router import ParserRouter
 from app.engines.parser_engine.base_parser import ParseResult
 from app.repositories.parser_repo import ParserRepository
 from app.repositories.repository_repo import RepositoryRepository
-from app.models.parser import ParserRun
+from app.models.parser import ParserRun, FileParseStatus
 from app.models.repository import RepositoryFile
 from app.core.logging import get_logger
 
@@ -15,6 +15,7 @@ logger = get_logger(__name__)
 
 MAX_WORKERS = 4
 MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024  # 5MB
+PARSER_VERSION = "1.0.0"
 
 
 @dataclass
@@ -24,10 +25,12 @@ class FileParseResult:
     language: str
     result: ParseResult
     error: str | None = None
+    should_parse: bool = True
+    checksum: str | None = None
 
 
 class ParserService:
-    """Orchestrates parsing of repository files using tree-sitter."""
+    """Orchestrates parsing of repository files using tree-sitter with incremental parsing support."""
 
     def __init__(self, db: Session):
         self.db = db
@@ -36,7 +39,7 @@ class ParserService:
         self.router = ParserRouter()
 
     def parse_repository(self, repository_id: int, force: bool = False) -> ParserRun:
-        """Parse all supported files in a repository."""
+        """Parse all supported files in a repository with incremental parsing support."""
         repository = self.repo_repo.get_repository_by_id(repository_id)
         if not repository:
             raise ValueError(f"Repository not found: {repository_id}")
@@ -47,6 +50,7 @@ class ParserService:
             run,
             status="in_progress",
             started_at=datetime.now(timezone.utc),
+            parser_version=PARSER_VERSION,
         )
 
         try:
@@ -59,10 +63,21 @@ class ParserService:
                     completed_at=datetime.now(timezone.utc),
                     duration_seconds=0.0,
                     total_files_parsed=0,
+                    files_parsed=0,
+                    files_skipped=0,
+                    files_failed=0,
                 )
                 return run
 
-            # Filter to parseable files
+            # Get previous successful parser run for incremental parsing
+            previous_run = None
+            previous_file_checksums = {}
+            if not force:
+                previous_run = self.parser_repo.get_latest_completed_parser_run(repository_id)
+                if previous_run:
+                    previous_file_checksums = self.parser_repo.get_file_checksums_by_parser_run(previous_run.id)
+
+            # Filter to parseable files and determine which need parsing
             parseable_files = [
                 f for f in files
                 if f.language and self.router.is_supported(f.language)
@@ -74,37 +89,59 @@ class ParserService:
                 f"{len(parseable_files)}/{len(files)} files are parseable"
             )
 
-            # If previous run exists and not forcing, only parse modified files
-            previous_run = None
-            if not force:
-                all_runs = self.db.query(ParserRun).filter(
-                    ParserRun.repository_id == repository_id,
-                    ParserRun.status == "completed",
-                    ParserRun.id != run.id,
-                ).order_by(ParserRun.created_at.desc()).first()
-                previous_run = all_runs
-
-            if previous_run and not force:
-                # Delete old nodes - we'll re-parse all since we don't track file checksums per parse
-                self.parser_repo.delete_nodes_by_parser_run(previous_run.id)
-
             start_time = time.time()
 
-            # Parse files in parallel
-            file_results = self._parse_files_parallel(parseable_files)
+            # Determine which files need parsing (incremental logic)
+            files_to_parse = self._determine_files_to_parse(
+                parseable_files, previous_file_checksums, force
+            )
 
-            # Store results
+            logger.info(
+                f"Incremental parsing: {len(files_to_parse)} files to parse, "
+                f"{len(parseable_files) - len(files_to_parse)} files to skip"
+            )
+
+            # Parse files in parallel
+            file_results = self._parse_files_parallel(files_to_parse)
+
+            # Store results and track statistics
             total_nodes = 0
             total_functions = 0
             total_classes = 0
             total_imports = 0
             files_parsed = 0
+            files_skipped = 0
+            files_failed = 0
 
+            # Process parse results
             for fr in file_results:
                 if fr.error:
                     logger.warning(f"Error parsing {fr.file_path}: {fr.error}")
+                    files_failed += 1
+                    # Record failed parse status
+                    self.parser_repo.create_file_parse_status(
+                        parser_run_id=run.id,
+                        file_id=fr.file_id,
+                        status="failed",
+                        checksum=fr.checksum,
+                        error_message=fr.error,
+                    )
                     continue
 
+                if not fr.should_parse:
+                    # File was skipped (unchanged)
+                    files_skipped += 1
+                    # Copy previous parse status or create skipped status
+                    self.parser_repo.create_file_parse_status(
+                        parser_run_id=run.id,
+                        file_id=fr.file_id,
+                        status="skipped",
+                        checksum=fr.checksum,
+                        previous_checksum=previous_file_checksums.get(fr.file_id),
+                    )
+                    continue
+
+                # File was parsed successfully
                 files_parsed += 1
                 result = fr.result
                 total_nodes += result.total_nodes
@@ -112,7 +149,23 @@ class ParserService:
                 total_classes += len(result.classes)
                 total_imports += len(result.imports)
 
+                # Remove stale AST records for modified files
+                if previous_file_checksums.get(fr.file_id) != fr.checksum:
+                    self.parser_repo.delete_nodes_by_file_and_run(fr.file_id, run.id)
+
+                # Store parse result
                 self._store_parse_result(fr.file_id, run.id, result)
+
+                # Record successful parse status
+                self.parser_repo.create_file_parse_status(
+                    parser_run_id=run.id,
+                    file_id=fr.file_id,
+                    status="parsed",
+                    checksum=fr.checksum,
+                    previous_checksum=previous_file_checksums.get(fr.file_id),
+                    nodes_extracted=result.total_nodes,
+                    parsed_at=datetime.now(timezone.utc),
+                )
 
             duration = round(time.time() - start_time, 3)
 
@@ -126,13 +179,16 @@ class ParserService:
                 total_imports=total_imports,
                 duration_seconds=duration,
                 completed_at=datetime.now(timezone.utc),
+                files_parsed=files_parsed,
+                files_skipped=files_skipped,
+                files_failed=files_failed,
             )
 
             logger.info(
                 f"Parsing completed for repository {repository_id}: "
-                f"{files_parsed} files, {total_nodes} nodes, "
-                f"{total_functions} functions, {total_classes} classes, "
-                f"{total_imports} imports in {duration}s"
+                f"{files_parsed} parsed, {files_skipped} skipped, {files_failed} failed, "
+                f"{total_nodes} nodes, {total_functions} functions, "
+                f"{total_classes} classes, {total_imports} imports in {duration}s"
             )
 
         except Exception as e:
@@ -145,6 +201,25 @@ class ParserService:
             )
 
         return run
+
+    def _determine_files_to_parse(
+        self, files: list[RepositoryFile], previous_checksums: dict[int, str], force: bool
+    ) -> list[RepositoryFile]:
+        """Determine which files need parsing based on checksums."""
+        files_to_parse = []
+
+        for file in files:
+            current_checksum = file.checksum
+            previous_checksum = previous_checksums.get(file.id)
+
+            # Parse if:
+            # - Force mode is enabled
+            # - File has no previous checksum (new file or never parsed)
+            # - Checksum has changed (modified file)
+            if force or not previous_checksum or current_checksum != previous_checksum:
+                files_to_parse.append(file)
+
+        return files_to_parse
 
     def _parse_files_parallel(self, files: list[RepositoryFile]) -> list[FileParseResult]:
         """Parse multiple files in parallel using ThreadPoolExecutor."""
@@ -160,6 +235,8 @@ class ParserService:
                         language=file.language,
                         result=ParseResult(),
                         error="Could not read file",
+                        should_parse=False,
+                        checksum=file.checksum,
                     )
 
                 parser = self.router.get_parser(file.language)
@@ -170,6 +247,8 @@ class ParserService:
                         language=file.language,
                         result=ParseResult(),
                         error=f"Unsupported language: {file.language}",
+                        should_parse=False,
+                        checksum=file.checksum,
                     )
 
                 logger.debug(f"Parsing {file.relative_path} ({file.language})")
@@ -181,6 +260,8 @@ class ParserService:
                     language=file.language,
                     result=result,
                     error=result.error,
+                    should_parse=True,
+                    checksum=file.checksum,
                 )
             except Exception as e:
                 return FileParseResult(
@@ -189,6 +270,8 @@ class ParserService:
                     language=file.language or "unknown",
                     result=ParseResult(),
                     error=str(e),
+                    should_parse=False,
+                    checksum=file.checksum,
                 )
 
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:

@@ -23,9 +23,17 @@ class ParserRun(Base, TimestampMixin):
     error_message: Mapped[str | None] = mapped_column(Text)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Incremental parsing fields
+    files_parsed: Mapped[int] = mapped_column(Integer, default=0)
+    files_skipped: Mapped[int] = mapped_column(Integer, default=0)
+    files_failed: Mapped[int] = mapped_column(Integer, default=0)
+    parser_version: Mapped[str] = mapped_column(String(50), default="1.0.0")
 
     ast_nodes: Mapped[list["ASTNode"]] = relationship(
         "ASTNode", back_populates="parser_run", cascade="all, delete-orphan"
+    )
+    file_parse_statuses: Mapped[list["FileParseStatus"]] = relationship(
+        "FileParseStatus", back_populates="parser_run", cascade="all, delete-orphan"
     )
 
     def __repr__(self) -> str:
@@ -199,3 +207,33 @@ class Comment(ASTNode):
 
     def __repr__(self) -> str:
         return f"<Comment(id={self.id}, type={self.comment_type})>"
+
+
+class FileParseStatus(Base, TimestampMixin):
+    """Model tracking parsing status of each file per parser run for incremental parsing."""
+
+    __tablename__ = "file_parse_statuses"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    parser_run_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("parser_runs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    file_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("repository_files.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="pending")  # pending, parsed, skipped, failed
+    checksum: Mapped[str | None] = mapped_column(String(64))  # SHA256 checksum
+    previous_checksum: Mapped[str | None] = mapped_column(String(64))  # Previous checksum for comparison
+    parsed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_message: Mapped[str | None] = mapped_column(Text)
+    nodes_extracted: Mapped[int] = mapped_column(Integer, default=0)
+
+    parser_run: Mapped["ParserRun"] = relationship("ParserRun", back_populates="file_parse_statuses")
+
+    __table_args__ = (
+        # Unique constraint on parser_run_id and file_id to track each file once per run
+        {"schema": None},
+    )
+
+    def __repr__(self) -> str:
+        return f"<FileParseStatus(id={self.id}, file_id={self.file_id}, status={self.status}, checksum={self.checksum})>"

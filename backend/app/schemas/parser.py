@@ -19,6 +19,11 @@ class ParserRunResponse(BaseModel):
     completed_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
+    # Incremental parsing fields
+    files_parsed: int = 0
+    files_skipped: int = 0
+    files_failed: int = 0
+    parser_version: str = "1.0.0"
 
     model_config = {"from_attributes": True}
 
