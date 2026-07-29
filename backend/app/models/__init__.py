@@ -7,6 +7,17 @@ from app.models.repository import (
     Framework,
     Dependency,
 )
+from app.models.parser import (
+    ParserRun,
+    ASTNode,
+    Function,
+    Class,
+    Method,
+    Import,
+    Export,
+    Variable,
+    Comment,
+)
 
 __all__ = [
     "User",
@@ -16,4 +27,13 @@ __all__ = [
     "ProgrammingLanguage",
     "Framework",
     "Dependency",
+    "ParserRun",
+    "ASTNode",
+    "Function",
+    "Class",
+    "Method",
+    "Import",
+    "Export",
+    "Variable",
+    "Comment",
 ]

@@ -13,6 +13,7 @@ Production-grade AI platform for automated documentation operations.
 - **SQLAlchemy** - SQL toolkit and ORM
 - **Alembic** - Database migration tool
 - **Pydantic** - Data validation using Python type annotations
+- **Tree-sitter** - Incremental parsing system for source code analysis
 
 ### Frontend
 - **Next.js 14** - React framework
@@ -33,7 +34,8 @@ AutoDocOps/
 │   │   ├── api/v1/
 │   │   │   ├── endpoints/
 │   │   │   │   ├── health.py          # Health check endpoints
-│   │   │   │   └── repositories.py    # Repository Intelligence API
+│   │   │   │   ├── repositories.py    # Repository Intelligence API
+│   │   │   │   └── parser.py          # Parser Engine API
 │   │   │   └── api.py                 # API router
 │   │   ├── core/
 │   │   │   ├── config.py              # Application settings
@@ -43,17 +45,27 @@ AutoDocOps/
 │   │   │   ├── base.py, session.py    # SQLAlchemy base & session
 │   │   │   ├── neo4j.py               # Neo4j client
 │   │   │   └── redis.py               # Redis client
+│   │   ├── engines/parser_engine/
+│   │   │   ├── base_parser.py         # Abstract base parser
+│   │   │   ├── parser_router.py       # Language parser router
+│   │   │   ├── python_parser.py       # Python Tree-sitter parser
+│   │   │   ├── javascript_parser.py   # JavaScript Tree-sitter parser
+│   │   │   ├── typescript_parser.py   # TypeScript Tree-sitter parser
+│   │   │   └── parser_service.py      # Parser orchestration service
 │   │   ├── models/
 │   │   │   ├── user.py                # User model
-│   │   │   └── repository.py          # Repository, Scan, File, Language, Framework, Dependency
+│   │   │   ├── repository.py          # Repository, Scan, File, Language, Framework, Dependency
+│   │   │   └── parser.py              # ASTNode, Function, Class, Method, Import, Export, Variable, Comment, ParserRun
 │   │   ├── schemas/
-│   │   │   └── repository.py          # Request/response Pydantic schemas
+│   │   │   ├── repository.py          # Repository Pydantic schemas
+│   │   │   └── parser.py              # Parser Pydantic schemas
 │   │   ├── services/
 │   │   │   ├── git_manager.py         # Git clone/pull operations
 │   │   │   ├── repository_scanner.py  # File scanning & metadata collection
-│   │   │   └── repository_service.py  # Business logic orchestration
+│   │   │   └── repository_service.py  # Repository business logic
 │   │   ├── repositories/
-│   │   │   └── repository_repo.py     # Data access layer
+│   │   │   ├── repository_repo.py     # Repository data access
+│   │   │   └── parser_repo.py         # Parser data access
 │   │   ├── utils/
 │   │   │   ├── language_detector.py   # Extension-based language detection
 │   │   │   ├── framework_detector.py  # Config-file framework detection
@@ -288,6 +300,55 @@ curl http://localhost:8000/api/v1/repositories/1/languages
 curl http://localhost:8000/api/v1/repositories/1/frameworks
 curl http://localhost:8000/api/v1/repositories/1/dependencies
 curl http://localhost:8000/api/v1/repositories/1/files
+```
+
+## Parser Engine
+
+The Parser Engine uses Tree-sitter to parse source code into structured Abstract Syntax Trees (ASTs) for deep code analysis.
+
+### Features
+
+- **Tree-sitter Integration** — Incremental parsing system for accurate, efficient source code analysis
+- **Multi-Language Support** — Python, JavaScript, TypeScript (extensible architecture for Java, C++, Go, Rust)
+- **AST Extraction** — Functions, Classes, Methods, Imports, Exports, Variables, Comments
+- **Detailed Metadata** — Line numbers, parameters, return types, decorators, inheritance, docstrings
+- **Parallel Parsing** — Multi-threaded file parsing for performance
+- **Parser Router** — Automatic language-based parser selection
+- **Extensible Design** — Easy to add new language parsers
+
+### Supported Languages
+
+| Language | Features |
+|----------|----------|
+| Python | Functions, Classes, Methods, Imports, Variables, Comments, Decorators, Docstrings, Async/Generator |
+| JavaScript | Functions (declaration, expression, arrow), Classes, Methods, Imports (ES6, require), Exports, Variables, Comments |
+| TypeScript | All JavaScript features + Type annotations, Interfaces, Abstract classes, Enums, Type aliases |
+
+### API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/v1/repositories/{id}/parse` | Parse all supported files in a repository |
+| `GET` | `/api/v1/repositories/{id}/ast` | Get AST summary for a repository |
+| `GET` | `/api/v1/repositories/{id}/functions` | Get all extracted functions |
+| `GET` | `/api/v1/repositories/{id}/classes` | Get all extracted classes |
+| `GET` | `/api/v1/repositories/{id}/imports` | Get all extracted imports |
+| `GET` | `/api/v1/repositories/{id}/variables` | Get all extracted variables |
+
+### Usage Example
+
+```bash
+# Parse a repository (must be scanned first)
+curl -X POST http://localhost:8000/api/v1/repositories/1/parse
+
+# Get AST summary
+curl http://localhost:8000/api/v1/repositories/1/ast
+
+# Get specific node types
+curl http://localhost:8000/api/v1/repositories/1/functions
+curl http://localhost:8000/api/v1/repositories/1/classes
+curl http://localhost:8000/api/v1/repositories/1/imports
+curl http://localhost:8000/api/v1/repositories/1/variables
 ```
 
 ### Running Tests
