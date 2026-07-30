@@ -36,7 +36,8 @@ AutoDocOps/
 │   │   │   │   ├── health.py          # Health check endpoints
 │   │   │   │   ├── repositories.py    # Repository Intelligence API
 │   │   │   │   ├── parser.py          # Parser Engine API
-│   │   │   │   └── memory.py          # Repository Memory Engine API
+│   │   │   │   ├── memory.py          # Repository Memory Engine API
+│   │   │   │   └── graph.py           # Knowledge Graph Engine API
 │   │   │   └── api.py                 # API router
 │   │   ├── core/
 │   │   │   ├── config.py              # Application settings
@@ -57,6 +58,10 @@ AutoDocOps/
 │   │   │   ├── diff_engine.py         # Snapshot comparison & change detection
 │   │   │   ├── commit_tracker.py      # Git commit history tracking
 │   │   │   └── snapshot_service.py    # Snapshot creation & management
+│   │   ├── engines/graph_engine/
+│   │   │   ├── cypher_builder.py       # Reusable Cypher query builders
+│   │   │   ├── graph_sync_service.py   # PostgreSQL→Neo4j synchronization
+│   │   │   └── graph_query_service.py  # Read-only graph analytics
 │   │   ├── models/
 │   │   │   ├── user.py                # User model
 │   │   │   ├── repository.py          # Repository, Scan, File, Language, Framework, Dependency
@@ -65,7 +70,8 @@ AutoDocOps/
 │   │   ├── schemas/
 │   │   │   ├── repository.py          # Repository Pydantic schemas
 │   │   │   ├── parser.py              # Parser Pydantic schemas
-│   │   │   └── memory.py              # Memory Engine Pydantic schemas
+│   │   │   ├── memory.py              # Memory Engine Pydantic schemas
+│   │   │   └── graph.py               # Graph Engine Pydantic schemas
 │   │   ├── services/
 │   │   │   ├── git_manager.py         # Git clone/pull operations
 │   │   │   ├── repository_scanner.py  # File scanning & metadata collection
@@ -414,6 +420,74 @@ curl http://localhost:8000/api/v1/repositories/1/changes
 
 # Get changes for a specific commit
 curl http://localhost:8000/api/v1/repositories/1/changes/abc123def456
+```
+
+## Knowledge Graph Engine
+
+The Knowledge Graph Engine builds a Neo4j-powered Software Knowledge Graph representing the complete repository structure and relationships.
+
+### Features
+
+- **Neo4j Graph Builder** — Synchronizes PostgreSQL parsed entities into Neo4j on every snapshot
+- **Incremental Updates** — Never rebuilds the graph; only creates, updates, or deletes changed nodes and relationships
+- **Reusable Cypher Layer** — Parameterized Cypher query builders (NodeBuilder, RelationshipBuilder, AnalyticsBuilder)
+- **Graph Analytics** — Most connected files, largest classes, dependency graph, import graph, call graph, language & framework statistics
+- **Batch Writes** — All Neo4j writes are batched using UNWIND for performance
+- **Error Handling** — If one node fails, remaining nodes continue syncing
+
+### Node Types
+
+Repository, Commit, Snapshot, Directory, File, Class, Function, Method, Variable, Import, Export, Interface, Enum, Dependency, Framework, ProgrammingLanguage
+
+### Relationship Types
+
+| Relationship | From | To |
+|---|---|---|
+| CONTAINS | Repository/Directory/Snapshot | Directory/File |
+| DEFINES | File | Class/Function/Method/Variable/Import/Export |
+| HAS_METHOD | Class | Method |
+| IMPORTS | File | Import |
+| DEPENDS_ON | Repository/File | Dependency |
+| EXTENDS | Class | Class |
+| IMPLEMENTS | Class | Interface |
+| HAS_COMMIT | Repository | Commit |
+| CREATED | Commit | Snapshot |
+| USES | Repository | Framework |
+| USES_LANGUAGE | Repository | ProgrammingLanguage |
+
+### API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/v1/repositories/{id}/graph/sync` | Sync repository to Neo4j graph |
+| `GET` | `/api/v1/repositories/{id}/graph/statistics` | Node and relationship counts |
+| `GET` | `/api/v1/repositories/{id}/graph/node/{element_id}` | Get a specific graph node |
+| `GET` | `/api/v1/repositories/{id}/graph/neighbors/{element_id}` | Get neighbors of a node |
+| `GET` | `/api/v1/repositories/{id}/graph/analytics/connected-files` | Most connected files |
+| `GET` | `/api/v1/repositories/{id}/graph/analytics/largest-classes` | Largest classes by method count |
+| `GET` | `/api/v1/repositories/{id}/graph/analytics/dependency-graph` | File-to-dependency relationships |
+| `GET` | `/api/v1/repositories/{id}/graph/analytics/import-graph` | File-to-import relationships |
+| `GET` | `/api/v1/repositories/{id}/graph/analytics/call-graph` | Function/method call relationships |
+| `GET` | `/api/v1/repositories/{id}/graph/analytics/languages` | Language distribution |
+| `GET` | `/api/v1/repositories/{id}/graph/analytics/frameworks` | Detected frameworks |
+
+### Usage Example
+
+```bash
+# Sync repository to Neo4j
+curl -X POST http://localhost:8000/api/v1/repositories/1/graph/sync
+
+# Get graph statistics
+curl http://localhost:8000/api/v1/repositories/1/graph/statistics
+
+# Get most connected files
+curl http://localhost:8000/api/v1/repositories/1/graph/analytics/connected-files
+
+# Get dependency graph
+curl http://localhost:8000/api/v1/repositories/1/graph/analytics/dependency-graph
+
+# Get call graph
+curl http://localhost:8000/api/v1/repositories/1/graph/analytics/call-graph
 ```
 
 ## Health Checks
