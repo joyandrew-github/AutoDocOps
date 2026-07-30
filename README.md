@@ -83,6 +83,13 @@ AutoDocOps/
 │   │   │   ├── tools.py               # ToolExecutor (calls existing services)
 │   │   │   ├── agents.py              # 7 specialized agents
 │   │   │   └── orchestrator.py        # AgentOrchestrator, AgentRegistry
+│   │   ├── engines/github_engine/
+│   │   │   ├── security.py            # Webhook signature validation, token encryption
+│   │   │   ├── job_queue.py           # Background job queue with retry logic
+│   │   │   ├── pipeline.py            # Automatic push pipeline (7-step)
+│   │   │   ├── pr_analysis.py         # Pull request analysis service
+│   │   │   ├── webhook_handler.py     # Webhook event dispatch (9 event types)
+│   │   │   └── github_service.py      # Repository connect/disconnect/sync
 │   │   ├── models/
 │   │   │   ├── user.py                # User model
 │   │   │   ├── repository.py          # Repository, Scan, File, Language, Framework, Dependency
@@ -91,7 +98,8 @@ AutoDocOps/
 │   │   │   ├── vector.py              # Embedding, CodeChunk, SearchIndex, EmbeddingJob
 │   │   │   ├── documentation.py       # Documentation, DocumentationVersion, DocumentationSection, DocumentationJob
 │   │   │   ├── architecture.py        # ArchitectureModel, ArchitectureDiagram, ArchitectureSnapshot, ArchitectureViolation
-│   │   │   └── impact.py              # ImpactAnalysis, ImpactResult, ImpactRelationship, RiskAssessment
+│   │   │   ├── impact.py              # ImpactAnalysis, ImpactResult, ImpactRelationship, RiskAssessment
+│   │   │   └── github.py              # GitHubAccount, ConnectedRepository, WebhookEvent, PipelineJob, PullRequestAnalysis, RepositorySync
 │   │   ├── schemas/
 │   │   │   ├── repository.py          # Repository Pydantic schemas
 │   │   │   ├── parser.py              # Parser Pydantic schemas
@@ -101,7 +109,8 @@ AutoDocOps/
 │   │   │   ├── documentation.py       # Documentation Engine Pydantic schemas
 │   │   │   ├── architecture.py        # Architecture Engine Pydantic schemas
 │   │   │   ├── impact.py              # Impact Analysis Pydantic schemas
-│   │   │   └── ai.py                  # AI Multi-Agent System Pydantic schemas
+│   │   │   ├── ai.py                  # AI Multi-Agent System Pydantic schemas
+│   │   │   └── github.py              # GitHub Integration Pydantic schemas
 │   │   ├── services/
 │   │   │   ├── git_manager.py         # Git clone/pull operations
 │   │   │   ├── repository_scanner.py  # File scanning & metadata collection
@@ -113,7 +122,8 @@ AutoDocOps/
 │   │   │   ├── vector_repo.py         # Vector Search data access
 │   │   │   ├── documentation_repo.py  # Documentation Engine data access
 │   │   │   ├── architecture_repo.py   # Architecture Engine data access
-│   │   │   └── impact_repo.py         # Impact Analysis data access
+│   │   │   ├── impact_repo.py         # Impact Analysis data access
+│   │   │   └── github_repo.py         # GitHub Integration data access
 │   │   ├── utils/
 │   │   │   ├── language_detector.py   # Extension-based language detection
 │   │   │   ├── framework_detector.py  # Config-file framework detection
@@ -838,6 +848,118 @@ curl http://localhost:8000/api/v1/ai/agents
 
 # Get conversation history
 curl "http://localhost:8000/api/v1/ai/history?conversation_id=<id>"
+```
+
+## GitHub Integration & Automation Engine
+
+Event-driven platform that automatically analyzes repositories whenever changes occur.
+
+### Authentication
+
+- **Personal Access Token (PAT)** — Token-based authentication
+- **GitHub OAuth** — OAuth flow support
+- **GitHub App** — Designed for future support (installation ID stored)
+
+Tokens are encrypted at rest using Fernet symmetric encryption.
+
+### Repository Management
+
+- **Connect** — Register a GitHub repository for automatic processing
+- **Disconnect** — Deactivate a connected repository
+- **Sync** — Manually trigger full pipeline execution
+- **Branch Selection** — Select which branch to track
+- **Default Branch Detection** — Detect the repository’s default branch
+
+### Webhook Engine
+
+`POST /api/v1/github/webhook` — receives and validates GitHub webhook events.
+
+| Event | Action |
+|-------|--------|
+| `push` | Trigger full automatic pipeline |
+| `pull_request` | Run PR analysis (opened/synchronize/reopened) |
+| `create` | Log branch/tag creation |
+| `delete` | Log branch/tag deletion |
+| `release` | Log release events |
+| `repository` | Log repository events |
+| `installation` | Log GitHub App installations |
+| `installation_repositories` | Log repository additions |
+| `ping` | Respond with pong |
+
+Webhook signatures are validated using HMAC-SHA256.
+
+### Automatic Pipeline (on push)
+
+The 7-step pipeline runs automatically on every push:
+
+1. **Incremental Parsing** — Parse changed files
+2. **Repository Memory** — Update snapshots and change sets
+3. **Knowledge Graph** — Sync graph database
+4. **Embeddings** — Update vector embeddings
+5. **Documentation** — Regenerate documentation
+6. **Architecture** — Update architecture models
+7. **Impact Analysis** — Analyze change impact
+
+### Pull Request Analysis
+
+For every PR, generates:
+- Changed files, classes, and functions count
+- Architecture and documentation impact assessment
+- Risk score and risk level (Low/Medium/High/Critical)
+- Breaking changes detection (API/schema files)
+- Recommended tests (unit, integration, regression)
+- Summary report
+
+### Background Jobs
+
+- **Job Queue** — In-process async queue with thread-based execution
+- **Retry Logic** — Configurable max retries (default: 3)
+- **Failure Tracking** — Error messages and attempt counts persisted
+- **Job Status** — queued → running → completed/failed
+
+### API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/v1/github/connect` | Connect a GitHub repository |
+| `POST` | `/api/v1/github/disconnect` | Disconnect a repository |
+| `GET` | `/api/v1/github/repositories` | List connected repositories |
+| `POST` | `/api/v1/github/repositories/{id}/sync` | Sync a repository |
+| `GET` | `/api/v1/github/jobs` | List pipeline jobs |
+| `GET` | `/api/v1/github/jobs/{id}` | Get job details |
+| `GET` | `/api/v1/github/pull-requests/{id}` | Get PR analysis |
+| `POST` | `/api/v1/github/webhook` | GitHub webhook endpoint |
+
+### Webhook Setup
+
+1. Connect a repository via `POST /api/v1/github/connect`
+2. Note the returned `webhook_secret`
+3. In GitHub repository settings → Webhooks → Add webhook:
+   - **Payload URL:** `https://your-domain/api/v1/github/webhook`
+   - **Content type:** `application/json`
+   - **Secret:** Use the `webhook_secret` from step 2
+   - **Events:** Select "Send me everything" or choose specific events
+4. Pushes and PRs will now be processed automatically
+
+### Usage Example
+
+```bash
+# Connect a repository
+curl -X POST http://localhost:8000/api/v1/github/connect \
+  -H "Content-Type: application/json" \
+  -d '{"github_account_id": 1, "github_repo_id": 12345, "full_name": "org/repo"}'
+
+# Sync a repository
+curl -X POST http://localhost:8000/api/v1/github/repositories/1/sync
+
+# List connected repositories
+curl "http://localhost:8000/api/v1/github/repositories?account_id=1"
+
+# Get job status
+curl http://localhost:8000/api/v1/github/jobs/1
+
+# Get PR analysis
+curl http://localhost:8000/api/v1/github/pull-requests/1
 ```
 
 ## Health Checks
