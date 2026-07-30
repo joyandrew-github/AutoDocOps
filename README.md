@@ -38,7 +38,8 @@ AutoDocOps/
 │   │   │   │   ├── parser.py          # Parser Engine API
 │   │   │   │   ├── memory.py          # Repository Memory Engine API
 │   │   │   │   ├── graph.py           # Knowledge Graph Engine API
-│   │   │   │   └── search.py          # Vector Search & Semantic Retrieval API
+│   │   │   │   ├── search.py          # Vector Search & Semantic Retrieval API
+│   │   │   │   └── documentation.py   # Intelligent Documentation Engine API
 │   │   │   └── api.py                 # API router
 │   │   ├── core/
 │   │   │   ├── config.py              # Application settings
@@ -68,18 +69,23 @@ AutoDocOps/
 │   │   │   ├── chunker.py             # Semantic code chunking
 │   │   │   ├── embedding_service.py   # Incremental embedding sync
 │   │   │   └── search_service.py      # Cosine similarity search
+│   │   ├── engines/documentation_engine/
+│   │   │   ├── markdown_generator.py  # Markdown document generation
+│   │   │   └── documentation_service.py # Incremental documentation pipeline
 │   │   ├── models/
 │   │   │   ├── user.py                # User model
 │   │   │   ├── repository.py          # Repository, Scan, File, Language, Framework, Dependency
 │   │   │   ├── parser.py              # ASTNode, Function, Class, Method, Import, Export, Variable, Comment, ParserRun
 │   │   │   ├── memory.py              # GitCommit, RepositorySnapshot, EntityVersion, ChangeSet, FileChange, EntityChange
-│   │   │   └── vector.py              # Embedding, CodeChunk, SearchIndex, EmbeddingJob
+│   │   │   ├── vector.py              # Embedding, CodeChunk, SearchIndex, EmbeddingJob
+│   │   │   └── documentation.py       # Documentation, DocumentationVersion, DocumentationSection, DocumentationJob
 │   │   ├── schemas/
 │   │   │   ├── repository.py          # Repository Pydantic schemas
 │   │   │   ├── parser.py              # Parser Pydantic schemas
 │   │   │   ├── memory.py              # Memory Engine Pydantic schemas
 │   │   │   ├── graph.py               # Graph Engine Pydantic schemas
-│   │   │   └── vector.py              # Vector Search Pydantic schemas
+│   │   │   ├── vector.py              # Vector Search Pydantic schemas
+│   │   │   └── documentation.py       # Documentation Engine Pydantic schemas
 │   │   ├── services/
 │   │   │   ├── git_manager.py         # Git clone/pull operations
 │   │   │   ├── repository_scanner.py  # File scanning & metadata collection
@@ -88,7 +94,8 @@ AutoDocOps/
 │   │   │   ├── repository_repo.py     # Repository data access
 │   │   │   ├── parser_repo.py         # Parser data access
 │   │   │   ├── memory_repo.py         # Memory Engine data access
-│   │   │   └── vector_repo.py         # Vector Search data access
+│   │   │   ├── vector_repo.py         # Vector Search data access
+│   │   │   └── documentation_repo.py  # Documentation Engine data access
 │   │   ├── utils/
 │   │   │   ├── language_detector.py   # Extension-based language detection
 │   │   │   ├── framework_detector.py  # Config-file framework detection
@@ -552,6 +559,63 @@ curl http://localhost:8000/api/v1/search/similar/process?repository_id=1&entity_
 
 # Check index status
 curl http://localhost:8000/api/v1/repositories/1/embeddings/status
+```
+
+## Intelligent Documentation Engine
+
+The Documentation Engine automatically generates and maintains developer documentation from source code and repository intelligence.
+
+### Documentation Types
+
+- **Repository Overview** — Project summary with stats, languages, frameworks, dependencies
+- **File Documentation** — Per-file docs with classes, functions, imports, variables
+- **Class Documentation** — Standalone class docs with methods and inheritance
+- **Function Documentation** — Function docs with signature, parameters, returns, decorators
+- **Module Documentation** — Folder/package docs aggregating contained entities
+- **Changelog** — Commit history summary from Repository Memory Engine
+- **Onboarding Guide** — Developer getting-started guide with tech stack and key files
+- **Dependency Documentation** — Full dependency listing with versions and package managers
+
+### Features
+
+- **Incremental Generation** — Only regenerates docs for new/modified/deleted entities via Memory Engine
+- **Versioning** — Tracks documentation versions with change history
+- **Sections** — Structured sections within each document
+- **Export Formats** — Markdown, HTML, PDF-ready Markdown
+- **Search** — Full-text search across all documentation
+- **Batch Processing** — Generates all doc types in a single pipeline pass
+
+### API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/v1/repositories/{id}/documentation/generate` | Generate/update documentation |
+| `GET` | `/api/v1/repositories/{id}/documentation` | List all documentation |
+| `GET` | `/api/v1/documentation/{id}` | Get specific document with sections |
+| `GET` | `/api/v1/documentation/search` | Search documentation |
+| `POST` | `/api/v1/documentation/export` | Export in markdown/HTML/PDF format |
+
+### Usage Example
+
+```bash
+# Generate all documentation
+curl -X POST http://localhost:8000/api/v1/repositories/1/documentation/generate
+
+# Generate specific types only
+curl -X POST http://localhost:8000/api/v1/repositories/1/documentation/generate \
+  -H "Content-Type: application/json" \
+  -d '{"doc_types": ["repository_overview", "class", "function"]}'
+
+# List all documentation
+curl http://localhost:8000/api/v1/repositories/1/documentation
+
+# Search documentation
+curl "http://localhost:8000/api/v1/documentation/search?query=process&repository_id=1"
+
+# Export as HTML
+curl -X POST http://localhost:8000/api/v1/documentation/export \
+  -H "Content-Type: application/json" \
+  -d '{"repository_id": 1, "format": "html"}'
 ```
 
 ## Health Checks
