@@ -49,6 +49,16 @@ class Settings(BaseSettings):
             return [i.strip() for i in v.split(",") if i.strip()]
         return v
 
+    # Embedding
+    EMBEDDING_PROVIDER: str = "mock"  # mock, openai, local
+    EMBEDDING_DIMENSION: int = 1536
+    OPENAI_API_KEY: str = ""
+    OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"
+    EMBEDDING_BATCH_SIZE: int = 100
+    EMBEDDING_MAX_TOKENS: int = 8191
+    CHUNK_SIZE: int = 512
+    CHUNK_OVERLAP: int = 64
+
     # Repository Intelligence
     REPOSITORY_WORKSPACE: str = "/tmp/autodocops/repos"
 

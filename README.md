@@ -37,7 +37,8 @@ AutoDocOps/
 │   │   │   │   ├── repositories.py    # Repository Intelligence API
 │   │   │   │   ├── parser.py          # Parser Engine API
 │   │   │   │   ├── memory.py          # Repository Memory Engine API
-│   │   │   │   └── graph.py           # Knowledge Graph Engine API
+│   │   │   │   ├── graph.py           # Knowledge Graph Engine API
+│   │   │   │   └── search.py          # Vector Search & Semantic Retrieval API
 │   │   │   └── api.py                 # API router
 │   │   ├── core/
 │   │   │   ├── config.py              # Application settings
@@ -62,16 +63,23 @@ AutoDocOps/
 │   │   │   ├── cypher_builder.py       # Reusable Cypher query builders
 │   │   │   ├── graph_sync_service.py   # PostgreSQL→Neo4j synchronization
 │   │   │   └── graph_query_service.py  # Read-only graph analytics
+│   │   ├── engines/vector_engine/
+│   │   │   ├── embedding_providers.py  # Pluggable embedding providers
+│   │   │   ├── chunker.py             # Semantic code chunking
+│   │   │   ├── embedding_service.py   # Incremental embedding sync
+│   │   │   └── search_service.py      # Cosine similarity search
 │   │   ├── models/
 │   │   │   ├── user.py                # User model
 │   │   │   ├── repository.py          # Repository, Scan, File, Language, Framework, Dependency
 │   │   │   ├── parser.py              # ASTNode, Function, Class, Method, Import, Export, Variable, Comment, ParserRun
-│   │   │   └── memory.py              # GitCommit, RepositorySnapshot, EntityVersion, ChangeSet, FileChange, EntityChange
+│   │   │   ├── memory.py              # GitCommit, RepositorySnapshot, EntityVersion, ChangeSet, FileChange, EntityChange
+│   │   │   └── vector.py              # Embedding, CodeChunk, SearchIndex, EmbeddingJob
 │   │   ├── schemas/
 │   │   │   ├── repository.py          # Repository Pydantic schemas
 │   │   │   ├── parser.py              # Parser Pydantic schemas
 │   │   │   ├── memory.py              # Memory Engine Pydantic schemas
-│   │   │   └── graph.py               # Graph Engine Pydantic schemas
+│   │   │   ├── graph.py               # Graph Engine Pydantic schemas
+│   │   │   └── vector.py              # Vector Search Pydantic schemas
 │   │   ├── services/
 │   │   │   ├── git_manager.py         # Git clone/pull operations
 │   │   │   ├── repository_scanner.py  # File scanning & metadata collection
@@ -79,7 +87,8 @@ AutoDocOps/
 │   │   ├── repositories/
 │   │   │   ├── repository_repo.py     # Repository data access
 │   │   │   ├── parser_repo.py         # Parser data access
-│   │   │   └── memory_repo.py         # Memory Engine data access
+│   │   │   ├── memory_repo.py         # Memory Engine data access
+│   │   │   └── vector_repo.py         # Vector Search data access
 │   │   ├── utils/
 │   │   │   ├── language_detector.py   # Extension-based language detection
 │   │   │   ├── framework_detector.py  # Config-file framework detection
@@ -488,6 +497,61 @@ curl http://localhost:8000/api/v1/repositories/1/graph/analytics/dependency-grap
 
 # Get call graph
 curl http://localhost:8000/api/v1/repositories/1/graph/analytics/call-graph
+```
+
+## Vector Search & Semantic Retrieval Engine
+
+The Vector Search Engine provides production-grade semantic code search powered by PostgreSQL pgvector.
+
+### Features
+
+- **Pluggable Embedding Providers** — `MockEmbeddingProvider`, `OpenAIEmbeddingProvider`, `LocalEmbeddingProvider` with a common `BaseEmbeddingProvider` interface
+- **Semantic Chunking** — Splits large code entities into meaningful chunks respecting line boundaries
+- **Incremental Embeddings** — Only processes new/modified entities; deletes embeddings for removed entities via Memory Engine
+- **Cosine Similarity Search** — Top-K semantic search with repository, language, and entity type filtering
+- **Background Job Tracking** — `EmbeddingJob` records track progress, retries, and failures
+- **Batch Processing** — Configurable batch sizes for embedding generation
+
+### Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `EMBEDDING_PROVIDER` | `mock` | Provider: `mock`, `openai`, `local` |
+| `EMBEDDING_DIMENSION` | `1536` | Embedding vector dimension |
+| `OPENAI_API_KEY` | `""` | OpenAI API key (required for `openai` provider) |
+| `OPENAI_EMBEDDING_MODEL` | `text-embedding-3-small` | OpenAI model |
+| `EMBEDDING_BATCH_SIZE` | `100` | Entities per batch |
+| `CHUNK_SIZE` | `512` | Tokens per chunk |
+| `CHUNK_OVERLAP` | `64` | Overlap tokens between chunks |
+
+### API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/v1/repositories/{id}/embeddings/sync` | Generate/update embeddings |
+| `POST` | `/api/v1/search` | Semantic code search |
+| `GET` | `/api/v1/search/file/{file_id}` | Search by file |
+| `GET` | `/api/v1/search/function/{function_id}` | Search by function |
+| `GET` | `/api/v1/search/similar/{entity_name}` | Find similar entities |
+| `GET` | `/api/v1/repositories/{id}/embeddings/status` | Index status |
+| `GET` | `/api/v1/repositories/{id}/embeddings/jobs` | Job history |
+
+### Usage Example
+
+```bash
+# Sync embeddings for a repository
+curl -X POST http://localhost:8000/api/v1/repositories/1/embeddings/sync
+
+# Semantic search
+curl -X POST http://localhost:8000/api/v1/search \
+  -H "Content-Type: application/json" \
+  -d '{"query": "function that processes user input", "repository_id": 1, "top_k": 5}'
+
+# Find similar entities
+curl http://localhost:8000/api/v1/search/similar/process?repository_id=1&entity_type=function
+
+# Check index status
+curl http://localhost:8000/api/v1/repositories/1/embeddings/status
 ```
 
 ## Health Checks
