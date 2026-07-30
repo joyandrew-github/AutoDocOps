@@ -19,6 +19,14 @@ from app.models.parser import (
     Comment,
     FileParseStatus,
 )
+from app.models.memory import (
+    GitCommit,
+    RepositorySnapshot,
+    EntityVersion,
+    ChangeSet,
+    FileChange,
+    EntityChange,
+)
 
 __all__ = [
     "User",
@@ -38,4 +46,10 @@ __all__ = [
     "Variable",
     "Comment",
     "FileParseStatus",
+    "GitCommit",
+    "RepositorySnapshot",
+    "EntityVersion",
+    "ChangeSet",
+    "FileChange",
+    "EntityChange",
 ]

@@ -35,7 +35,8 @@ AutoDocOps/
 │   │   │   ├── endpoints/
 │   │   │   │   ├── health.py          # Health check endpoints
 │   │   │   │   ├── repositories.py    # Repository Intelligence API
-│   │   │   │   └── parser.py          # Parser Engine API
+│   │   │   │   ├── parser.py          # Parser Engine API
+│   │   │   │   └── memory.py          # Repository Memory Engine API
 │   │   │   └── api.py                 # API router
 │   │   ├── core/
 │   │   │   ├── config.py              # Application settings
@@ -52,20 +53,27 @@ AutoDocOps/
 │   │   │   ├── javascript_parser.py   # JavaScript Tree-sitter parser
 │   │   │   ├── typescript_parser.py   # TypeScript Tree-sitter parser
 │   │   │   └── parser_service.py      # Parser orchestration service
+│   │   ├── engines/memory_engine/
+│   │   │   ├── diff_engine.py         # Snapshot comparison & change detection
+│   │   │   ├── commit_tracker.py      # Git commit history tracking
+│   │   │   └── snapshot_service.py    # Snapshot creation & management
 │   │   ├── models/
 │   │   │   ├── user.py                # User model
 │   │   │   ├── repository.py          # Repository, Scan, File, Language, Framework, Dependency
-│   │   │   └── parser.py              # ASTNode, Function, Class, Method, Import, Export, Variable, Comment, ParserRun
+│   │   │   ├── parser.py              # ASTNode, Function, Class, Method, Import, Export, Variable, Comment, ParserRun
+│   │   │   └── memory.py              # GitCommit, RepositorySnapshot, EntityVersion, ChangeSet, FileChange, EntityChange
 │   │   ├── schemas/
 │   │   │   ├── repository.py          # Repository Pydantic schemas
-│   │   │   └── parser.py              # Parser Pydantic schemas
+│   │   │   ├── parser.py              # Parser Pydantic schemas
+│   │   │   └── memory.py              # Memory Engine Pydantic schemas
 │   │   ├── services/
 │   │   │   ├── git_manager.py         # Git clone/pull operations
 │   │   │   ├── repository_scanner.py  # File scanning & metadata collection
 │   │   │   └── repository_service.py  # Repository business logic
 │   │   ├── repositories/
 │   │   │   ├── repository_repo.py     # Repository data access
-│   │   │   └── parser_repo.py         # Parser data access
+│   │   │   ├── parser_repo.py         # Parser data access
+│   │   │   └── memory_repo.py         # Memory Engine data access
 │   │   ├── utils/
 │   │   │   ├── language_detector.py   # Extension-based language detection
 │   │   │   ├── framework_detector.py  # Config-file framework detection
@@ -356,6 +364,56 @@ curl http://localhost:8000/api/v1/repositories/1/variables
 ```bash
 cd backend
 pytest tests/ -v
+```
+
+## Repository Memory Engine
+
+The Repository Memory Engine tracks repository evolution across Git commits and preserves historical knowledge by detecting changes at both the file level and code entity level.
+
+### Features
+
+- **Git History Tracking** — Syncs commit history (hash, parent, author, timestamp, message, branch, tags) via GitPython
+- **Repository Snapshots** — Creates point-in-time snapshots with aggregated metrics (files, classes, functions, methods, imports, variables)
+- **Entity Versioning** — Tracks versions of classes, functions, methods, variables, imports, and exports across commits
+- **Change Detection** — Detects new, deleted, renamed, modified, and moved files and entities using the DiffEngine
+- **DiffEngine** — Reusable comparison engine that generates structured change objects from snapshot data
+- **Performance** — Processes only changed files, reuses incremental parsing information
+- **Error Handling** — Continues processing if individual comparisons fail, records failures
+
+### Change Types Detected
+
+| Level | Change Types |
+|-------|--------------|
+| **File** | added, modified, deleted, renamed |
+| **Entity** | added, modified, deleted, renamed, moved |
+
+### API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/v1/repositories/{id}/timeline` | Chronological timeline of commits, snapshots, and changes |
+| `GET` | `/api/v1/repositories/{id}/commits` | Commit history for a repository |
+| `GET` | `/api/v1/repositories/{id}/snapshots` | Repository snapshots over time |
+| `GET` | `/api/v1/repositories/{id}/changes` | Change sets between snapshots |
+| `GET` | `/api/v1/repositories/{id}/changes/{commit}` | Detailed file and entity changes for a specific commit |
+
+### Usage Example
+
+```bash
+# Get repository timeline
+curl http://localhost:8000/api/v1/repositories/1/timeline
+
+# Get commit history
+curl http://localhost:8000/api/v1/repositories/1/commits
+
+# Get snapshots
+curl http://localhost:8000/api/v1/repositories/1/snapshots
+
+# Get all change sets
+curl http://localhost:8000/api/v1/repositories/1/changes
+
+# Get changes for a specific commit
+curl http://localhost:8000/api/v1/repositories/1/changes/abc123def456
 ```
 
 ## Health Checks
