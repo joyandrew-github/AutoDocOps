@@ -76,6 +76,8 @@ AutoDocOps/
 │   │   │   ├── analyzer.py            # Architecture analysis (layers, modules, dependencies, violations)
 │   │   │   ├── diagram_generator.py   # PlantUML, Mermaid, JSON, SVG export
 │   │   │   └── architecture_service.py # Incremental architecture pipeline
+│   │   ├── engines/impact_engine/
+│   │   │   └── impact_service.py       # Impact analysis, risk scoring, test recommendations
 │   │   ├── models/
 │   │   │   ├── user.py                # User model
 │   │   │   ├── repository.py          # Repository, Scan, File, Language, Framework, Dependency
@@ -83,7 +85,8 @@ AutoDocOps/
 │   │   │   ├── memory.py              # GitCommit, RepositorySnapshot, EntityVersion, ChangeSet, FileChange, EntityChange
 │   │   │   ├── vector.py              # Embedding, CodeChunk, SearchIndex, EmbeddingJob
 │   │   │   ├── documentation.py       # Documentation, DocumentationVersion, DocumentationSection, DocumentationJob
-│   │   │   └── architecture.py        # ArchitectureModel, ArchitectureDiagram, ArchitectureSnapshot, ArchitectureViolation
+│   │   │   ├── architecture.py        # ArchitectureModel, ArchitectureDiagram, ArchitectureSnapshot, ArchitectureViolation
+│   │   │   └── impact.py              # ImpactAnalysis, ImpactResult, ImpactRelationship, RiskAssessment
 │   │   ├── schemas/
 │   │   │   ├── repository.py          # Repository Pydantic schemas
 │   │   │   ├── parser.py              # Parser Pydantic schemas
@@ -91,7 +94,8 @@ AutoDocOps/
 │   │   │   ├── graph.py               # Graph Engine Pydantic schemas
 │   │   │   ├── vector.py              # Vector Search Pydantic schemas
 │   │   │   ├── documentation.py       # Documentation Engine Pydantic schemas
-│   │   │   └── architecture.py        # Architecture Engine Pydantic schemas
+│   │   │   ├── architecture.py        # Architecture Engine Pydantic schemas
+│   │   │   └── impact.py              # Impact Analysis Pydantic schemas
 │   │   ├── services/
 │   │   │   ├── git_manager.py         # Git clone/pull operations
 │   │   │   ├── repository_scanner.py  # File scanning & metadata collection
@@ -102,7 +106,8 @@ AutoDocOps/
 │   │   │   ├── memory_repo.py         # Memory Engine data access
 │   │   │   ├── vector_repo.py         # Vector Search data access
 │   │   │   ├── documentation_repo.py  # Documentation Engine data access
-│   │   │   └── architecture_repo.py   # Architecture Engine data access
+│   │   │   ├── architecture_repo.py   # Architecture Engine data access
+│   │   │   └── impact_repo.py         # Impact Analysis data access
 │   │   ├── utils/
 │   │   │   ├── language_detector.py   # Extension-based language detection
 │   │   │   ├── framework_detector.py  # Config-file framework detection
@@ -684,6 +689,81 @@ curl http://localhost:8000/api/v1/repositories/1/architecture/violations
 
 # Get specific model with all diagram formats
 curl http://localhost:8000/api/v1/architecture/1
+```
+
+## Impact Analysis Engine
+
+The Impact Analysis Engine evaluates the impact of source code changes across the entire codebase.
+
+### Change Impact Analysis
+
+- **Direct Dependents** — Files and entities that directly import/use the changed entity
+- **Indirect Dependents** — Transitive dependencies up to configurable depth
+- **Call Graph Impact** — Functions and methods affected through the call chain
+- **Import Impact** — Files affected through import relationships
+- **API Impact** — Public API changes flagged with higher risk
+- **Cross-Module Impact** — Changes that affect multiple modules
+
+### Risk Assessment
+
+Configurable risk scoring with weighted factors:
+
+| Factor | Weight | Description |
+|--------|--------|-------------|
+| **Dependency** | 25% | Number of downstream dependencies |
+| **API** | 20% | Public API surface changes |
+| **Cross-Module** | 15% | Changes spanning multiple modules |
+| **Circular Deps** | 15% | Involvement in circular dependency chains |
+| **Change Frequency** | 10% | Historical change frequency |
+| **Architecture** | 15% | Architecture-level impact |
+
+Risk levels: **Low** (0–0.25) · **Medium** (0.25–0.50) · **High** (0.50–0.75) · **Critical** (0.75–1.0)
+
+### Test Recommendations
+
+- **Unit Tests** — For changed functions, methods, and classes
+- **Integration Tests** — For entities with downstream dependents
+- **Regression Tests** — For high/critical risk entities
+
+### Export Formats
+
+- **JSON** — Structured analysis data
+- **Markdown** — Human-readable impact report
+- **HTML** — Styled HTML report
+
+### API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/v1/repositories/{id}/impact/analyze` | Run impact analysis |
+| `GET` | `/api/v1/impact/{id}` | Get analysis with results and risk |
+| `GET` | `/api/v1/repositories/{id}/impact/history` | Analysis history |
+| `GET` | `/api/v1/repositories/{id}/impact/entity/{name}` | Entity-level impact |
+| `GET` | `/api/v1/repositories/{id}/impact/risk` | Latest risk assessment |
+| `POST` | `/api/v1/impact/{id}/export` | Export analysis (JSON/Markdown/HTML) |
+
+### Usage Example
+
+```bash
+# Run impact analysis
+curl -X POST http://localhost:8000/api/v1/repositories/1/impact/analyze
+
+# Get analysis details
+curl http://localhost:8000/api/v1/impact/1
+
+# Get analysis history
+curl http://localhost:8000/api/v1/repositories/1/impact/history
+
+# Get entity-level impact
+curl http://localhost:8000/api/v1/repositories/1/impact/entity/process
+
+# Get risk assessment
+curl http://localhost:8000/api/v1/repositories/1/impact/risk
+
+# Export as Markdown
+curl -X POST http://localhost:8000/api/v1/impact/1/export \
+  -H "Content-Type: application/json" \
+  -d '{"format": "markdown"}'
 ```
 
 ## Health Checks

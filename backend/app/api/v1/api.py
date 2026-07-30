@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api.v1.endpoints import health, repositories, parser, memory, graph, search, documentation, architecture
+from app.api.v1.endpoints import health, repositories, parser, memory, graph, search, documentation, architecture, impact
 
 api_router = APIRouter()
 
@@ -11,3 +11,4 @@ api_router.include_router(graph.router, tags=["graph"])
 api_router.include_router(search.router, tags=["search"])
 api_router.include_router(documentation.router, tags=["documentation"])
 api_router.include_router(architecture.router, tags=["architecture"])
+api_router.include_router(impact.router, tags=["impact"])
