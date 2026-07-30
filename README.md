@@ -78,6 +78,11 @@ AutoDocOps/
 │   │   │   └── architecture_service.py # Incremental architecture pipeline
 │   │   ├── engines/impact_engine/
 │   │   │   └── impact_service.py       # Impact analysis, risk scoring, test recommendations
+│   │   ├── engines/ai_engine/
+│   │   │   ├── base.py                # BaseAgent, AgentContext, ConversationMemory
+│   │   │   ├── tools.py               # ToolExecutor (calls existing services)
+│   │   │   ├── agents.py              # 7 specialized agents
+│   │   │   └── orchestrator.py        # AgentOrchestrator, AgentRegistry
 │   │   ├── models/
 │   │   │   ├── user.py                # User model
 │   │   │   ├── repository.py          # Repository, Scan, File, Language, Framework, Dependency
@@ -95,7 +100,8 @@ AutoDocOps/
 │   │   │   ├── vector.py              # Vector Search Pydantic schemas
 │   │   │   ├── documentation.py       # Documentation Engine Pydantic schemas
 │   │   │   ├── architecture.py        # Architecture Engine Pydantic schemas
-│   │   │   └── impact.py              # Impact Analysis Pydantic schemas
+│   │   │   ├── impact.py              # Impact Analysis Pydantic schemas
+│   │   │   └── ai.py                  # AI Multi-Agent System Pydantic schemas
 │   │   ├── services/
 │   │   │   ├── git_manager.py         # Git clone/pull operations
 │   │   │   ├── repository_scanner.py  # File scanning & metadata collection
@@ -764,6 +770,74 @@ curl http://localhost:8000/api/v1/repositories/1/impact/risk
 curl -X POST http://localhost:8000/api/v1/impact/1/export \
   -H "Content-Type: application/json" \
   -d '{"format": "markdown"}'
+```
+
+## AI Multi-Agent System
+
+The AI layer coordinates specialized agents that consume existing AutoDocOps engines.
+
+### Architecture
+
+- **AgentOrchestrator** — Routes, plans, and executes agent workflows
+- **AgentRegistry** — Manages available agents and confidence-based routing
+- **BaseAgent** — Abstract base with `handle()`, `stream()`, and `can_handle()` methods
+- **AgentContext** — Shared invocation state (repository, conversation, entities)
+- **ToolExecutor** — 18 tool adapters that delegate to existing services
+- **ConversationMemory** — Per-conversation history with context summaries
+
+### Agents
+
+| Agent | Description | Tools Used |
+|-------|-------------|------------|
+| **Repository Expert** | Repository questions, overview, commits | `get_repository`, `get_files`, `get_commits`, `search_code` |
+| **Code Expert** | Explains functions, classes, modules | `get_functions`, `get_classes`, `get_imports`, `search_code` |
+| **Documentation Expert** | Generates and retrieves docs | `get_documentation`, `generate_documentation` |
+| **Architecture Expert** | Architecture, dependencies, diagrams | `get_architecture`, `get_dependencies`, `get_callgraph`, `get_violations` |
+| **Impact Expert** | "What if I change X?" analysis | `analyze_impact`, `get_impact`, `get_risk` |
+| **Search Expert** | Semantic code search | `search_code` |
+| **Workflow Planner** | Breaks complex requests into subtasks | Routes to other agents |
+
+### Execution Modes
+
+- **Single-agent** — Auto-routed via confidence scoring
+- **Multi-agent** — Sequential plan execution
+- **Parallel** — Concurrent agent execution via thread pool
+- **Streaming** — Incremental response streaming
+
+### API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/v1/ai/chat` | Auto-routed single-agent chat |
+| `POST` | `/api/v1/ai/plan` | Create execution plan |
+| `POST` | `/api/v1/ai/execute` | Execute plan (sequential/parallel) |
+| `GET` | `/api/v1/ai/history` | Conversation history |
+| `GET` | `/api/v1/ai/agents` | List available agents |
+| `POST` | `/api/v1/ai/stream` | Streaming response |
+
+### Usage Example
+
+```bash
+# Chat (auto-routes to best agent)
+curl -X POST http://localhost:8000/api/v1/ai/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "explain the architecture", "repository_id": 1}'
+
+# Create a plan
+curl -X POST http://localhost:8000/api/v1/ai/plan \
+  -H "Content-Type: application/json" \
+  -d '{"message": "give me a full overview", "repository_id": 1}'
+
+# Execute plan in parallel
+curl -X POST http://localhost:8000/api/v1/ai/execute \
+  -H "Content-Type: application/json" \
+  -d '{"message": "overview", "repository_id": 1, "parallel": true}'
+
+# List agents
+curl http://localhost:8000/api/v1/ai/agents
+
+# Get conversation history
+curl "http://localhost:8000/api/v1/ai/history?conversation_id=<id>"
 ```
 
 ## Health Checks
