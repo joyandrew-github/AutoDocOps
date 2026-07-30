@@ -72,20 +72,26 @@ AutoDocOps/
 │   │   ├── engines/documentation_engine/
 │   │   │   ├── markdown_generator.py  # Markdown document generation
 │   │   │   └── documentation_service.py # Incremental documentation pipeline
+│   │   ├── engines/architecture_engine/
+│   │   │   ├── analyzer.py            # Architecture analysis (layers, modules, dependencies, violations)
+│   │   │   ├── diagram_generator.py   # PlantUML, Mermaid, JSON, SVG export
+│   │   │   └── architecture_service.py # Incremental architecture pipeline
 │   │   ├── models/
 │   │   │   ├── user.py                # User model
 │   │   │   ├── repository.py          # Repository, Scan, File, Language, Framework, Dependency
 │   │   │   ├── parser.py              # ASTNode, Function, Class, Method, Import, Export, Variable, Comment, ParserRun
 │   │   │   ├── memory.py              # GitCommit, RepositorySnapshot, EntityVersion, ChangeSet, FileChange, EntityChange
 │   │   │   ├── vector.py              # Embedding, CodeChunk, SearchIndex, EmbeddingJob
-│   │   │   └── documentation.py       # Documentation, DocumentationVersion, DocumentationSection, DocumentationJob
+│   │   │   ├── documentation.py       # Documentation, DocumentationVersion, DocumentationSection, DocumentationJob
+│   │   │   └── architecture.py        # ArchitectureModel, ArchitectureDiagram, ArchitectureSnapshot, ArchitectureViolation
 │   │   ├── schemas/
 │   │   │   ├── repository.py          # Repository Pydantic schemas
 │   │   │   ├── parser.py              # Parser Pydantic schemas
 │   │   │   ├── memory.py              # Memory Engine Pydantic schemas
 │   │   │   ├── graph.py               # Graph Engine Pydantic schemas
 │   │   │   ├── vector.py              # Vector Search Pydantic schemas
-│   │   │   └── documentation.py       # Documentation Engine Pydantic schemas
+│   │   │   ├── documentation.py       # Documentation Engine Pydantic schemas
+│   │   │   └── architecture.py        # Architecture Engine Pydantic schemas
 │   │   ├── services/
 │   │   │   ├── git_manager.py         # Git clone/pull operations
 │   │   │   ├── repository_scanner.py  # File scanning & metadata collection
@@ -95,7 +101,8 @@ AutoDocOps/
 │   │   │   ├── parser_repo.py         # Parser data access
 │   │   │   ├── memory_repo.py         # Memory Engine data access
 │   │   │   ├── vector_repo.py         # Vector Search data access
-│   │   │   └── documentation_repo.py  # Documentation Engine data access
+│   │   │   ├── documentation_repo.py  # Documentation Engine data access
+│   │   │   └── architecture_repo.py   # Architecture Engine data access
 │   │   ├── utils/
 │   │   │   ├── language_detector.py   # Extension-based language detection
 │   │   │   ├── framework_detector.py  # Config-file framework detection
@@ -616,6 +623,67 @@ curl "http://localhost:8000/api/v1/documentation/search?query=process&repository
 curl -X POST http://localhost:8000/api/v1/documentation/export \
   -H "Content-Type: application/json" \
   -d '{"repository_id": 1, "format": "html"}'
+```
+
+## Architecture Intelligence Engine
+
+The Architecture Engine automatically generates software architecture views from repository intelligence.
+
+### Architecture Analysis
+
+- **Layer Analysis** — Identifies architectural layers (API, Service, Engine, Repository, Model, Schema, Util, Config)
+- **Module Analysis** — Maps directory structure to logical modules with language breakdown
+- **Component Analysis** — Groups classes and functions into logical components, identifies services and entry points
+- **Dependency Graph** — File and module dependency analysis from import statements
+- **Call Graph** — Function and method call graph with cross-module edges
+- **Entry Points** — Identifies application entry points (main.py, app.py, create_app, etc.)
+- **API Detection** — Identifies API endpoints from file paths and decorators
+
+### Violation Detection
+
+- **Circular Dependencies** — Detects circular import chains
+- **Layer Violations** — Detects imports that violate layered architecture conventions
+
+### Diagram Export
+
+| Format | Description |
+|--------|-------------|
+| **Mermaid** | Mermaid.js diagram definitions |
+| **PlantUML** | PlantUML diagram definitions |
+| **JSON** | Structured JSON data |
+| **SVG** | SVG-ready vector graphics |
+
+### API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/v1/repositories/{id}/architecture/generate` | Generate architecture models and diagrams |
+| `GET` | `/api/v1/repositories/{id}/architecture` | List all architecture models |
+| `GET` | `/api/v1/architecture/{id}` | Get specific model with diagrams |
+| `GET` | `/api/v1/repositories/{id}/architecture/dependencies` | Get dependency graph |
+| `GET` | `/api/v1/repositories/{id}/architecture/callgraph` | Get call graph |
+| `GET` | `/api/v1/repositories/{id}/architecture/violations` | Get architecture violations |
+
+### Usage Example
+
+```bash
+# Generate architecture
+curl -X POST http://localhost:8000/api/v1/repositories/1/architecture/generate
+
+# List models
+curl http://localhost:8000/api/v1/repositories/1/architecture
+
+# Get dependency graph
+curl http://localhost:8000/api/v1/repositories/1/architecture/dependencies
+
+# Get call graph
+curl http://localhost:8000/api/v1/repositories/1/architecture/callgraph
+
+# Get violations
+curl http://localhost:8000/api/v1/repositories/1/architecture/violations
+
+# Get specific model with all diagram formats
+curl http://localhost:8000/api/v1/architecture/1
 ```
 
 ## Health Checks
