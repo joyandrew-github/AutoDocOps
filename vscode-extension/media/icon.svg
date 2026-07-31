@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <rect width="128" height="128" rx="16" fill="#1e1e2e"/>
+  <text x="64" y="80" font-size="56" font-family="monospace" fill="#89b4fa" text-anchor="middle" font-weight="bold">AD</text>
+  <circle cx="100" cy="28" r="12" fill="#a6e3a1"/>
+</svg>

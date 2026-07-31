@@ -1,0 +1,208 @@
+{
+  "name": "autodocops",
+  "displayName": "AutoDocOps",
+  "description": "AI-powered documentation operations — chat, explain, search, architecture, impact analysis",
+  "version": "0.1.0",
+  "publisher": "autodocops",
+  "license": "MIT",
+  "icon": "media/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/autodocops/autodocops"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Machine Learning",
+    "Other"
+  ],
+  "keywords": [
+    "documentation",
+    "ai",
+    "code-intelligence",
+    "architecture",
+    "impact-analysis"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "autodocops.login",
+        "title": "AutoDocOps: Login"
+      },
+      {
+        "command": "autodocops.logout",
+        "title": "AutoDocOps: Logout"
+      },
+      {
+        "command": "autodocops.selectRepository",
+        "title": "AutoDocOps: Select Repository"
+      },
+      {
+        "command": "autodocops.openChat",
+        "title": "AutoDocOps: AI Chat",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "autodocops.explainFunction",
+        "title": "AutoDocOps: Explain Function"
+      },
+      {
+        "command": "autodocops.explainClass",
+        "title": "AutoDocOps: Explain Class"
+      },
+      {
+        "command": "autodocops.explainFile",
+        "title": "AutoDocOps: Explain File"
+      },
+      {
+        "command": "autodocops.semanticSearch",
+        "title": "AutoDocOps: Semantic Search",
+        "icon": "$(search)"
+      },
+      {
+        "command": "autodocops.viewArchitecture",
+        "title": "AutoDocOps: View Architecture"
+      },
+      {
+        "command": "autodocops.viewDocumentation",
+        "title": "AutoDocOps: View Documentation"
+      },
+      {
+        "command": "autodocops.viewImpact",
+        "title": "AutoDocOps: Impact Analysis"
+      },
+      {
+        "command": "autodocops.explainSelection",
+        "title": "AutoDocOps: Explain Selection"
+      },
+      {
+        "command": "autodocops.askAboutSelection",
+        "title": "AutoDocOps: Ask AI About Selection"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "autodocops.explainSelection",
+          "when": "editorHasSelection",
+          "group": "autodocops@1"
+        },
+        {
+          "command": "autodocops.askAboutSelection",
+          "when": "editorHasSelection",
+          "group": "autodocops@2"
+        },
+        {
+          "command": "autodocops.explainFunction",
+          "group": "autodocops@3"
+        },
+        {
+          "command": "autodocops.explainClass",
+          "group": "autodocops@4"
+        },
+        {
+          "command": "autodocops.explainFile",
+          "group": "autodocops@5"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "autodocops.openChat",
+        "key": "ctrl+shift+a",
+        "mac": "cmd+shift+a"
+      },
+      {
+        "command": "autodocops.semanticSearch",
+        "key": "ctrl+shift+s",
+        "mac": "cmd+shift+s"
+      },
+      {
+        "command": "autodocops.explainSelection",
+        "key": "ctrl+shift+e",
+        "mac": "cmd+shift+e",
+        "when": "editorHasSelection"
+      }
+    ],
+    "configuration": {
+      "title": "AutoDocOps",
+      "properties": {
+        "autodocops.serverUrl": {
+          "type": "string",
+          "default": "http://localhost:8000",
+          "description": "AutoDocOps backend server URL"
+        },
+        "autodocops.repositoryId": {
+          "type": "number",
+          "default": 0,
+          "description": "Currently selected repository ID"
+        },
+        "autodocops.enableHoverExplanations": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show AI explanations on hover for functions and classes"
+        },
+        "autodocops.enableInlineCodeActions": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show inline code action lightbulbs for AI features"
+        },
+        "autodocops.streamResponses": {
+          "type": "boolean",
+          "default": true,
+          "description": "Stream AI responses in real-time"
+        },
+        "autodocops.maxSearchResults": {
+          "type": "number",
+          "default": 20,
+          "description": "Maximum semantic search results to display"
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "autodocops",
+          "title": "AutoDocOps",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "autodocops": [
+        {
+          "type": "webview",
+          "id": "autodocops.chatView",
+          "name": "AI Chat"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "compile": "webpack",
+    "watch": "webpack --watch",
+    "package": "webpack --mode production --devtool hidden-source-map",
+    "lint": "eslint src --ext ts"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@types/node": "^20.11.0",
+    "@typescript-eslint/eslint-plugin": "^6.15.0",
+    "@typescript-eslint/parser": "^6.15.0",
+    "eslint": "^8.56.0",
+    "typescript": "^5.3.3",
+    "webpack": "^5.89.0",
+    "webpack-cli": "^5.1.4",
+    "ts-loader": "^9.5.1"
+  },
+  "dependencies": {
+    "node-fetch": "^2.7.0"
+  }
+}
