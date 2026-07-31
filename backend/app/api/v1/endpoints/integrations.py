@@ -2,6 +2,8 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from app.db.session import get_db
+from app.core.deps import get_current_user
+from app.models.user import User
 from app.integrations.service import IntegrationService
 from app.schemas.integration import (
     IntegrationConnectRequest,
@@ -20,10 +22,10 @@ def _service(db: Session = Depends(get_db)) -> IntegrationService:
 
 
 @router.post("/connect", response_model=dict)
-def connect_integration(req: IntegrationConnectRequest, svc: IntegrationService = Depends(_service)):
+def connect_integration(req: IntegrationConnectRequest, current_user: User = Depends(get_current_user), svc: IntegrationService = Depends(_service)):
     """Connect a new integration."""
     return svc.connect(
-        user_id=1,  # TODO: extract from auth context
+        user_id=current_user.id,
         integration_type=req.integration_type,
         name=req.name,
         auth_method=req.auth_method,
