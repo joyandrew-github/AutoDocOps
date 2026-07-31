@@ -3,6 +3,7 @@ import { Inter } from 'next/font/google'
 import './globals.css'
 import { Providers } from '@/components/providers'
 import { DashboardLayout } from '@/components/layout/dashboard-layout'
+import { AuthGuard } from '@/components/auth-guard'
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -20,7 +21,9 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <body className={inter.className}>
         <Providers>
-          <DashboardLayout>{children}</DashboardLayout>
+          <AuthGuard>
+            <DashboardLayout>{children}</DashboardLayout>
+          </AuthGuard>
         </Providers>
       </body>
     </html>
