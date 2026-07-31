@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: autodocops-config
+  labels:
+    {{- include "autodocops.labels" . | nindent 4 }}
+data:
+  ENVIRONMENT: {{ .Values.config.environment | quote }}
+  POSTGRES_SERVER: "postgres-svc"
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: "autodocops"
+  NEO4J_URI: "bolt://neo4j-svc:7687"
+  NEO4J_USER: "neo4j"
+  REDIS_HOST: "redis-svc"
+  REDIS_PORT: "6379"
+  LOG_LEVEL: {{ .Values.config.logLevel | quote }}
+  OTEL_ENABLED: {{ .Values.config.otelEnabled | quote }}
+  OTEL_EXPORTER_ENDPOINT: "http://otel-collector-svc:4317"
+  PROMETHEUS_ENABLED: {{ .Values.config.prometheusEnabled | quote }}
+  RATE_LIMIT_PER_MINUTE: {{ .Values.config.rateLimitPerMinute | quote }}

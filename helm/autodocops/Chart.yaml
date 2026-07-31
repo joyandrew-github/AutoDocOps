@@ -1,0 +1,12 @@
+apiVersion: v2
+name: autodocops
+description: AutoDocOps - AI Documentation Operations Platform
+type: application
+version: 1.0.0
+appVersion: "0.1.0"
+maintainers:
+  - name: AutoDocOps Team
+keywords:
+  - documentation
+  - ai
+  - automation

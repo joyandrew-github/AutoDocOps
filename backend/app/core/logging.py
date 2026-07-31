@@ -1,6 +1,23 @@
 import sys
+import json
 from loguru import logger
 from app.core.config import settings
+
+
+def _json_sink(message):
+    """Structured JSON log sink for production."""
+    record = message.record
+    log_entry = {
+        "timestamp": record["time"].isoformat(),
+        "level": record["level"].name,
+        "logger": record.get("extra", {}).get("name", record["name"]),
+        "function": record["function"],
+        "line": record["line"],
+        "message": record["message"],
+        "service": settings.APP_NAME,
+        "environment": settings.ENVIRONMENT,
+    }
+    print(json.dumps(log_entry, default=str), flush=True)
 
 
 def setup_logging() -> None:
@@ -8,14 +25,18 @@ def setup_logging() -> None:
     
     # Remove default handler
     logger.remove()
-    
-    # Add console handler with color
-    logger.add(
-        sys.stdout,
-        format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
-        level=settings.LOG_LEVEL,
-        colorize=True,
-    )
+
+    if settings.ENVIRONMENT == "production":
+        # Structured JSON output for production
+        logger.add(_json_sink, level=settings.LOG_LEVEL)
+    else:
+        # Add console handler with color
+        logger.add(
+            sys.stdout,
+            format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
+            level=settings.LOG_LEVEL,
+            colorize=True,
+        )
     
     # Add file handler for errors
     logger.add(
@@ -37,7 +58,7 @@ def setup_logging() -> None:
         compression="zip",
     )
     
-    logger.info(f"Logging configured. Level: {settings.LOG_LEVEL}")
+    logger.info(f"Logging configured. Level: {settings.LOG_LEVEL} Environment: {settings.ENVIRONMENT}")
 
 
 def get_logger(name: str):

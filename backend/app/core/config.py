@@ -38,9 +38,25 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "your-secret-key-change-in-production"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
     # CORS
     BACKEND_CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:8000"]
+
+    # Rate Limiting
+    RATE_LIMIT_PER_MINUTE: int = 60
+
+    # Celery
+    CELERY_BROKER_URL: str = ""
+    CELERY_RESULT_BACKEND: str = ""
+
+    # Observability
+    OTEL_EXPORTER_ENDPOINT: str = "http://localhost:4317"
+    OTEL_ENABLED: bool = False
+    PROMETHEUS_ENABLED: bool = True
+
+    # Environment
+    ENVIRONMENT: str = "development"
 
     @field_validator("BACKEND_CORS_ORIGINS", mode="before")
     @classmethod
@@ -81,6 +97,11 @@ class Settings(BaseSettings):
                 self.REDIS_URL = f"redis://:{self.REDIS_PASSWORD}@{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
             else:
                 self.REDIS_URL = f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
+        # Build Celery URLs if not provided
+        if not self.CELERY_BROKER_URL:
+            self.CELERY_BROKER_URL = self.REDIS_URL
+        if not self.CELERY_RESULT_BACKEND:
+            self.CELERY_RESULT_BACKEND = self.REDIS_URL
 
 
 @lru_cache()

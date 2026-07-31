@@ -1,0 +1,91 @@
+replicaCount: 3
+
+image:
+  repository: autodocops/backend
+  tag: latest
+  pullPolicy: IfNotPresent
+
+frontend:
+  image:
+    repository: autodocops/frontend
+    tag: latest
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+backend:
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 2Gi
+
+celeryWorker:
+  replicaCount: 2
+  concurrency: 4
+  queues: "default,pipeline,analysis"
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 2Gi
+
+config:
+  environment: production
+  logLevel: INFO
+  rateLimitPerMinute: 120
+  otelEnabled: true
+  prometheusEnabled: true
+
+secrets:
+  postgresUser: autodocops
+  postgresPassword: CHANGE_ME
+  neo4jPassword: CHANGE_ME
+  secretKey: CHANGE_ME
+  redisPassword: ""
+
+postgres:
+  enabled: true
+  image: postgres:15-alpine
+  storage: 20Gi
+
+redis:
+  enabled: true
+  image: redis:7-alpine
+  maxMemory: 256mb
+
+neo4j:
+  enabled: true
+  image: neo4j:5.15-community
+  storage: 10Gi
+
+ingress:
+  enabled: true
+  className: nginx
+  host: autodocops.example.com
+  tls: true
+  clusterIssuer: letsencrypt-prod
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPU: 70
+  targetMemory: 80
+
+monitoring:
+  prometheus:
+    enabled: true
+  grafana:
+    enabled: true
+    adminUser: admin
+    adminPassword: admin

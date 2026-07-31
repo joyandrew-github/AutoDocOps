@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: autodocops-celery-worker
+  labels:
+    {{- include "autodocops.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.celeryWorker.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "autodocops.celery.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "autodocops.celery.selectorLabels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: worker
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - celery
+            - -A
+            - app.core.celery_app:celery_app
+            - worker
+            - --loglevel=info
+            - --concurrency={{ .Values.celeryWorker.concurrency }}
+            - -Q
+            - {{ .Values.celeryWorker.queues }}
+          envFrom:
+            - configMapRef:
+                name: autodocops-config
+            - secretRef:
+                name: autodocops-secrets
+          resources:
+            {{- toYaml .Values.celeryWorker.resources | nindent 12 }}
