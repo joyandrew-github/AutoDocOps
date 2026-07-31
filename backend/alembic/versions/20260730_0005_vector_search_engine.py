@@ -18,8 +18,17 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # Enable pgvector extension
-    op.execute("CREATE EXTENSION IF NOT EXISTS vector")
+    # Enable pgvector extension (optional - skip if not available)
+    op.execute("""
+        DO $$
+        BEGIN
+            IF EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'vector') THEN
+                CREATE EXTENSION IF NOT EXISTS vector;
+            END IF;
+        EXCEPTION WHEN OTHERS THEN
+            -- Extension not available or cannot be created, continue without it
+        END $$;
+    """)
 
     # --- embeddings ---
     op.create_table(

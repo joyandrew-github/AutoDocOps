@@ -77,7 +77,7 @@ services:
       REPOSITORY_WORKSPACE: /tmp/autodocops/repos
       DEBUG: "true"
     ports:
-      - "8000:8000"
+      - "8001:8000"
     volumes:
       - ./backend:/app
       - backend_logs:/app/logs
@@ -99,7 +99,7 @@ services:
       dockerfile: Dockerfile
     container_name: autodocops-frontend
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8000
+      NEXT_PUBLIC_API_URL: http://localhost:8001
     ports:
       - "3000:3000"
     volumes:

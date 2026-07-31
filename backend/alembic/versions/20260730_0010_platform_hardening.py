@@ -1,14 +1,14 @@
 """platform hardening: organizations, RBAC, refresh tokens, audit logs
 
 Revision ID: platform_hardening_001
-Revises: github_integration_001
+Revises: 0009
 Create Date: 2026-07-30
 """
 from alembic import op
 import sqlalchemy as sa
 
 revision = "platform_hardening_001"
-down_revision = "github_integration_001"
+down_revision = "0009"
 branch_labels = None
 depends_on = None
 
