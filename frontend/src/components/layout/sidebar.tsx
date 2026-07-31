@@ -5,7 +5,7 @@ import { cn } from '@/lib/utils'
 import { useAppStore } from '@/lib/store'
 import {
   LayoutDashboard, FolderGit2, MessageSquare, Share2, FileText,
-  Boxes, BarChart3, Search, ListChecks, Settings, Moon, Sun, PanelLeftClose, PanelLeft,
+  Boxes, BarChart3, Search, ListChecks, Settings, Moon, Sun, PanelLeftClose, PanelLeft, Plug,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
@@ -18,6 +18,7 @@ const navItems = [
   { href: '/architecture', label: 'Architecture', icon: Boxes },
   { href: '/impact', label: 'Impact Analysis', icon: BarChart3 },
   { href: '/search', label: 'Search', icon: Search },
+  { href: '/integrations', label: 'Integrations', icon: Plug },
   { href: '/jobs', label: 'Jobs', icon: ListChecks },
   { href: '/settings', label: 'Settings', icon: Settings },
 ]

@@ -27,6 +27,10 @@ from app.models.memory import (
     FileChange,
     EntityChange,
 )
+from app.models.integration import (
+    Integration,
+    IntegrationLog,
+)
 
 __all__ = [
     "User",
@@ -52,4 +56,6 @@ __all__ = [
     "ChangeSet",
     "FileChange",
     "EntityChange",
+    "Integration",
+    "IntegrationLog",
 ]
