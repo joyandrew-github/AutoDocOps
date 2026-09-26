@@ -65,7 +65,7 @@ def list_documentation(
         DocumentationListItem(
             id=d.id, doc_type=d.doc_type, title=d.title, slug=d.slug,
             entity_type=d.entity_type, entity_name=d.entity_name,
-            file_path=d.file_path, summary=d.summary, version=d.version,
+            file_path=d.file_path, content=d.content, summary=d.summary, version=d.version,
             language=d.language, created_at=d.created_at,
         )
         for d in docs

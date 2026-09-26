@@ -22,7 +22,7 @@ PARSER_VERSION = "1.0.0"
 class FileParseResult:
     file_id: int
     file_path: str
-    language: str
+    language: str | None
     result: ParseResult
     error: str | None = None
     should_parse: bool = True
@@ -76,117 +76,109 @@ class ParserService:
                 previous_run = self.parser_repo.get_latest_completed_parser_run(repository_id)
                 if previous_run:
                     previous_file_checksums = self.parser_repo.get_file_checksums_by_parser_run(previous_run.id)
+                    logger.info(
+                        f"Found previous parser run {previous_run.id} with "
+                        f"{len(previous_file_checksums)} file checksums for incremental parsing"
+                    )
 
-            # Filter to parseable files and determine which need parsing
-            parseable_files = [
-                f for f in files
-                if f.language and self.router.is_supported(f.language)
-                and f.size_bytes <= MAX_FILE_SIZE_BYTES
-            ]
-
-            logger.info(
-                f"Parsing repository {repository_id}: "
-                f"{len(parseable_files)}/{len(files)} files are parseable"
-            )
-
-            start_time = time.time()
-
-            # Determine which files need parsing (incremental logic)
-            files_to_parse = self._determine_files_to_parse(
-                parseable_files, previous_file_checksums, force
-            )
+            # Determine files that need parsing
+            files_to_parse = self._determine_files_to_parse(files, previous_file_checksums, force)
+            skipped_files = [f for f in files if f not in files_to_parse]
 
             logger.info(
-                f"Incremental parsing: {len(files_to_parse)} files to parse, "
-                f"{len(parseable_files) - len(files_to_parse)} files to skip"
+                f"Repository {repository_id}: {len(files)} total files, "
+                f"{len(files_to_parse)} to parse, {len(skipped_files)} skipped"
             )
 
             # Parse files in parallel
-            file_results = self._parse_files_parallel(files_to_parse)
+            start_time = time.time()
+            parsed_results = self._parse_files_parallel(files_to_parse)
 
-            # Store results and track statistics
+            # Process results and store AST nodes
             total_nodes = 0
             total_functions = 0
             total_classes = 0
             total_imports = 0
-            files_parsed = 0
-            files_skipped = 0
-            files_failed = 0
+            files_parsed_count = 0
+            files_failed_count = 0
 
-            # Process parse results
-            for fr in file_results:
-                if fr.error:
-                    logger.warning(f"Error parsing {fr.file_path}: {fr.error}")
-                    files_failed += 1
-                    # Record failed parse status
+            # Store AST nodes and record file statuses
+            for fr in parsed_results:
+                if fr.should_parse and not fr.error:
+                    # If incremental, delete previous AST nodes for this file
+                    if previous_run and not force:
+                        self.parser_repo.delete_nodes_by_file_and_run(fr.file_id, previous_run.id)
+
+                    # Save AST nodes
+                    self._store_parse_result(fr.file_id, run.id, fr.result)
+                    total_nodes += fr.result.total_nodes
+                    total_functions += len(fr.result.functions)
+                    total_classes += len(fr.result.classes)
+                    total_imports += len(fr.result.imports)
+                    files_parsed_count += 1
+
+                    # Record parsed status
                     self.parser_repo.create_file_parse_status(
                         parser_run_id=run.id,
                         file_id=fr.file_id,
+                        file_path=fr.file_path,
+                        status="parsed",
+                        checksum=fr.checksum,
+                    )
+                elif fr.error:
+                    files_failed_count += 1
+                    # Record failed status
+                    self.parser_repo.create_file_parse_status(
+                        parser_run_id=run.id,
+                        file_id=fr.file_id,
+                        file_path=fr.file_path,
                         status="failed",
-                        checksum=fr.checksum,
                         error_message=fr.error,
+                        checksum=fr.checksum,
                     )
-                    continue
-
-                if not fr.should_parse:
-                    # File was skipped (unchanged)
-                    files_skipped += 1
-                    # Copy previous parse status or create skipped status
+                else:
+                    # Skipped (unsupported language or unreadable)
                     self.parser_repo.create_file_parse_status(
                         parser_run_id=run.id,
                         file_id=fr.file_id,
+                        file_path=fr.file_path,
                         status="skipped",
+                        error_message=fr.error,
                         checksum=fr.checksum,
-                        previous_checksum=previous_file_checksums.get(fr.file_id),
                     )
-                    continue
 
-                # File was parsed successfully
-                files_parsed += 1
-                result = fr.result
-                total_nodes += result.total_nodes
-                total_functions += len(result.functions)
-                total_classes += len(result.classes)
-                total_imports += len(result.imports)
-
-                # Remove stale AST records for modified files
-                if previous_file_checksums.get(fr.file_id) != fr.checksum:
-                    self.parser_repo.delete_nodes_by_file_and_run(fr.file_id, run.id)
-
-                # Store parse result
-                self._store_parse_result(fr.file_id, run.id, result)
-
-                # Record successful parse status
+            # Record status for unchanged skipped files in incremental mode
+            for f in skipped_files:
+                f_checksum = getattr(f, "sha256_checksum", None) or getattr(f, "checksum", None)
                 self.parser_repo.create_file_parse_status(
                     parser_run_id=run.id,
-                    file_id=fr.file_id,
-                    status="parsed",
-                    checksum=fr.checksum,
-                    previous_checksum=previous_file_checksums.get(fr.file_id),
-                    nodes_extracted=result.total_nodes,
-                    parsed_at=datetime.now(timezone.utc),
+                    file_id=f.id,
+                    file_path=f.relative_path,
+                    status="skipped",
+                    checksum=f_checksum,
                 )
 
-            duration = round(time.time() - start_time, 3)
+            duration = round(time.time() - start_time, 2)
 
+            # Update parser run record
             self.parser_repo.update_parser_run(
                 run,
                 status="completed",
-                total_files_parsed=files_parsed,
+                completed_at=datetime.now(timezone.utc),
+                duration_seconds=duration,
+                total_files_parsed=files_parsed_count,
                 total_nodes_extracted=total_nodes,
                 total_functions=total_functions,
                 total_classes=total_classes,
                 total_imports=total_imports,
-                duration_seconds=duration,
-                completed_at=datetime.now(timezone.utc),
-                files_parsed=files_parsed,
-                files_skipped=files_skipped,
-                files_failed=files_failed,
+                files_parsed=files_parsed_count,
+                files_skipped=len(skipped_files),
+                files_failed=files_failed_count,
             )
 
             logger.info(
-                f"Parsing completed for repository {repository_id}: "
-                f"{files_parsed} parsed, {files_skipped} skipped, {files_failed} failed, "
+                f"Completed parsing repository {repository_id}: "
+                f"{files_parsed_count} parsed, {len(skipped_files)} skipped, {files_failed_count} failed, "
                 f"{total_nodes} nodes, {total_functions} functions, "
                 f"{total_classes} classes, {total_imports} imports in {duration}s"
             )
@@ -209,7 +201,7 @@ class ParserService:
         files_to_parse = []
 
         for file in files:
-            current_checksum = file.checksum
+            current_checksum = getattr(file, "sha256_checksum", None) or getattr(file, "checksum", None)
             previous_checksum = previous_checksums.get(file.id)
 
             # Parse if:
@@ -226,6 +218,8 @@ class ParserService:
         results: list[FileParseResult] = []
 
         def parse_single(file: RepositoryFile) -> FileParseResult:
+            f_checksum = getattr(file, "sha256_checksum", None) or getattr(file, "checksum", None)
+            f_lang = file.language or "unknown"
             try:
                 source_code = self._read_file(file.absolute_path)
                 if source_code is None:
@@ -236,22 +230,22 @@ class ParserService:
                         result=ParseResult(),
                         error="Could not read file",
                         should_parse=False,
-                        checksum=file.checksum,
+                        checksum=f_checksum,
                     )
 
-                parser = self.router.get_parser(file.language)
+                parser = self.router.get_parser(f_lang)
                 if not parser:
                     return FileParseResult(
                         file_id=file.id,
                         file_path=file.relative_path,
                         language=file.language,
                         result=ParseResult(),
-                        error=f"Unsupported language: {file.language}",
+                        error=f"Unsupported language: {f_lang}",
                         should_parse=False,
-                        checksum=file.checksum,
+                        checksum=f_checksum,
                     )
 
-                logger.debug(f"Parsing {file.relative_path} ({file.language})")
+                logger.debug(f"Parsing {file.relative_path} ({f_lang})")
                 result = parser.parse(source_code)
 
                 return FileParseResult(
@@ -261,7 +255,7 @@ class ParserService:
                     result=result,
                     error=result.error,
                     should_parse=True,
-                    checksum=file.checksum,
+                    checksum=f_checksum,
                 )
             except Exception as e:
                 return FileParseResult(
@@ -271,7 +265,7 @@ class ParserService:
                     result=ParseResult(),
                     error=str(e),
                     should_parse=False,
-                    checksum=file.checksum,
+                    checksum=f_checksum,
                 )
 
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:

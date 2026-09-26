@@ -24,8 +24,18 @@ class RegisterRequest(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    username: str
+    username: str | None = None
+    email: str | None = None
     password: str
+
+
+class UserResponse(BaseModel):
+    id: int
+    email: str
+    username: str
+    full_name: str | None = None
+    is_active: bool
+    is_superuser: bool
 
 
 class TokenResponse(BaseModel):
@@ -33,22 +43,28 @@ class TokenResponse(BaseModel):
     refresh_token: str
     token_type: str = "bearer"
     expires_in: int
+    user: UserResponse | None = None
+
+
+class RegisterResponse(BaseModel):
+    id: int
+    email: str
+    username: str
+    full_name: str | None = None
+    is_active: bool
+    is_superuser: bool
+    access_token: str | None = None
+    refresh_token: str | None = None
+    token_type: str = "bearer"
+    expires_in: int | None = None
+    user: UserResponse | None = None
 
 
 class RefreshRequest(BaseModel):
     refresh_token: str
 
 
-class UserResponse(BaseModel):
-    id: int
-    email: str
-    username: str
-    full_name: str | None
-    is_active: bool
-    is_superuser: bool
-
-
-@router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/register", response_model=RegisterResponse, status_code=status.HTTP_201_CREATED)
 def register(body: RegisterRequest, request: Request, db: Session = Depends(get_db)):
     """Register a new user."""
     if db.query(User).filter((User.email == body.email) | (User.username == body.username)).first():
@@ -63,13 +79,48 @@ def register(body: RegisterRequest, request: Request, db: Session = Depends(get_
     db.commit()
     db.refresh(user)
     record_audit(db, "register", "user", str(user.id), user.id, ip_address=request.client.host if request.client else None)
-    return UserResponse(id=user.id, email=user.email, username=user.username, full_name=user.full_name, is_active=user.is_active, is_superuser=user.is_superuser)
+
+    access_token = create_access_token(data={"sub": str(user.id)})
+    raw_refresh, token_hash = create_refresh_token(data={"sub": str(user.id)})
+    expires_at = datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+    db_token = RefreshToken(
+        user_id=user.id,
+        token_hash=token_hash,
+        expires_at=expires_at,
+        device_info=request.headers.get("user-agent", "")[:512],
+    )
+    db.add(db_token)
+    db.commit()
+
+    user_resp = UserResponse(
+        id=user.id,
+        email=user.email,
+        username=user.username,
+        full_name=user.full_name,
+        is_active=user.is_active,
+        is_superuser=user.is_superuser,
+    )
+    return RegisterResponse(
+        id=user.id,
+        email=user.email,
+        username=user.username,
+        full_name=user.full_name,
+        is_active=user.is_active,
+        is_superuser=user.is_superuser,
+        access_token=access_token,
+        refresh_token=raw_refresh,
+        expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        user=user_resp,
+    )
 
 
 @router.post("/login", response_model=TokenResponse)
 def login(body: LoginRequest, request: Request, db: Session = Depends(get_db)):
     """Authenticate and receive tokens."""
-    user = db.query(User).filter(User.username == body.username).first()
+    identifier = body.username or body.email
+    if not identifier:
+        raise HTTPException(status_code=422, detail="Username or email is required")
+    user = db.query(User).filter((User.username == identifier) | (User.email == identifier)).first()
     if not user or not verify_password(body.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     if not user.is_active:
@@ -86,7 +137,20 @@ def login(body: LoginRequest, request: Request, db: Session = Depends(get_db)):
     db.add(db_token)
     db.commit()
     record_audit(db, "login", "user", str(user.id), user.id, ip_address=request.client.host if request.client else None)
-    return TokenResponse(access_token=access_token, refresh_token=raw_refresh, expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60)
+    user_resp = UserResponse(
+        id=user.id,
+        email=user.email,
+        username=user.username,
+        full_name=user.full_name,
+        is_active=user.is_active,
+        is_superuser=user.is_superuser,
+    )
+    return TokenResponse(
+        access_token=access_token,
+        refresh_token=raw_refresh,
+        expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        user=user_resp,
+    )
 
 
 @router.post("/refresh", response_model=TokenResponse)

@@ -53,6 +53,9 @@ class ParserRepository:
             .first()
         )
 
+    def get_last_successful_run(self, repository_id: int) -> ParserRun | None:
+        return self.get_latest_completed_parser_run(repository_id)
+
     def get_file_checksums_by_parser_run(self, parser_run_id: int) -> dict[int, str]:
         """Get a mapping of file_id to checksum for a parser run."""
         rows = (
@@ -72,6 +75,8 @@ class ParserRepository:
         error_message: str | None = None,
         nodes_extracted: int = 0,
         parsed_at = None,
+        file_path: str | None = None,
+        **kwargs,
     ) -> FileParseStatus:
         file_status = FileParseStatus(
             parser_run_id=parser_run_id,

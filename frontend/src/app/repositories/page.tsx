@@ -7,21 +7,39 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { toast } from 'sonner'
-import { FolderGit2, RefreshCw, GitBranch, Clock, CheckCircle, XCircle, Loader2 } from 'lucide-react'
+import Link from 'next/link'
+import { FolderGit2, RefreshCw, GitBranch, Clock, CheckCircle, XCircle, Loader2, Boxes, FileText, Sparkles, ArrowUpRight } from 'lucide-react'
 
 export default function RepositoriesPage() {
   const qc = useQueryClient()
   const repos = useQuery({ queryKey: ['repositories'], queryFn: () => api.get('/api/v1/repositories') })
   const ghRepos = useQuery({ queryKey: ['gh-repos'], queryFn: () => api.get('/api/v1/github/repositories?account_id=1').catch(() => []) })
 
-  const syncMutation = useMutation({
+  const scanMutation = useMutation({
+    mutationFn: async (id: number) => {
+      await api.post(`/api/v1/repositories/${id}/scan`, {})
+      await api.post(`/api/v1/repositories/${id}/parse`, {})
+      await api.post(`/api/v1/repositories/${id}/architecture/generate`, {})
+    },
+    onSuccess: () => {
+      toast.success('Repository analyzed & architecture generated!')
+      qc.invalidateQueries({ queryKey: ['repositories'] })
+    },
+    onError: () => toast.error('Analysis failed'),
+  })
+
+  const ghSyncMutation = useMutation({
     mutationFn: (id: number) => api.post(`/api/v1/github/repositories/${id}/sync`, {}),
-    onSuccess: () => { toast.success('Sync started'); qc.invalidateQueries({ queryKey: ['repositories'] }) },
+    onSuccess: () => {
+      toast.success('GitHub sync completed!')
+      qc.invalidateQueries({ queryKey: ['gh-repos'] })
+      qc.invalidateQueries({ queryKey: ['repositories'] })
+    },
     onError: () => toast.error('Sync failed'),
   })
 
-  const repoList = repos.data || []
-  const connectedList = ghRepos.data || []
+  const repoList: any[] = repos.data || []
+  const connectedList: any[] = ghRepos.data || []
 
   if (repos.isLoading) {
     return (
@@ -37,9 +55,9 @@ export default function RepositoriesPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold">Repository Explorer</h1>
-          <p className="text-muted-foreground">Manage and explore connected repositories</p>
+          <p className="text-muted-foreground">Manage, explore, and run architecture intelligence across your codebases</p>
         </div>
-        <Button variant="outline" onClick={() => qc.invalidateQueries({ queryKey: ['repositories'] })}>
+        <Button variant="outline" onClick={() => { qc.invalidateQueries({ queryKey: ['repositories'] }); qc.invalidateQueries({ queryKey: ['gh-repos'] }) }}>
           <RefreshCw className="h-4 w-4 mr-2" />Refresh
         </Button>
       </div>
@@ -52,34 +70,60 @@ export default function RepositoriesPage() {
 
         <TabsContent value="all" className="space-y-4 mt-4">
           {repoList.length === 0 ? (
-            <Card><CardContent className="p-8 text-center text-muted-foreground">No repositories found. Connect a repository to get started.</CardContent></Card>
+            <Card><CardContent className="p-8 text-center text-muted-foreground">No repositories found. Connect a repository in Settings to get started.</CardContent></Card>
           ) : repoList.map((repo: any) => (
-            <Card key={repo.id}>
+            <Card key={repo.id} className="hover:border-primary/50 transition-colors">
               <CardHeader className="flex flex-row items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <FolderGit2 className="h-5 w-5 text-primary" />
+                  <div className="p-2 bg-primary/10 rounded-lg text-primary">
+                    <FolderGit2 className="h-6 w-6" />
+                  </div>
                   <div>
-                    <CardTitle className="text-base">{repo.name}</CardTitle>
-                    <CardDescription className="text-xs">{repo.url}</CardDescription>
+                    <CardTitle className="text-lg">{repo.name}</CardTitle>
+                    <CardDescription className="text-xs font-mono">{repo.url}</CardDescription>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
                   {repo.default_branch && (
                     <Badge variant="outline"><GitBranch className="h-3 w-3 mr-1" />{repo.default_branch}</Badge>
                   )}
-                  <Badge variant={repo.is_active ? 'success' : 'secondary'}>{repo.is_active ? 'Active' : 'Inactive'}</Badge>
+                  <Badge variant={repo.is_active ? 'default' : 'secondary'}>{repo.is_active ? 'Active' : 'Inactive'}</Badge>
                 </div>
               </CardHeader>
               <CardContent>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                  <div><span className="text-muted-foreground">ID:</span> <span className="font-medium">{repo.id}</span></div>
-                  <div><span className="text-muted-foreground">Branch:</span> <span className="font-medium">{repo.default_branch || 'N/A'}</span></div>
-                  <div><span className="text-muted-foreground">Description:</span> <span className="font-medium">{repo.description || 'None'}</span></div>
-                  <div>
-                    <Button size="sm" variant="outline" onClick={() => syncMutation.mutate(repo.id)} disabled={syncMutation.isPending}>
-                      {syncMutation.isPending ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <RefreshCw className="h-3 w-3 mr-1" />}
-                      Sync
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pt-2 border-t text-sm">
+                  <div className="flex items-center gap-6 text-muted-foreground text-xs">
+                    <span>ID: <strong className="text-foreground">{repo.id}</strong></span>
+                    <span>Path: <code className="text-foreground bg-muted px-1.5 py-0.5 rounded">{repo.local_path}</code></span>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => scanMutation.mutate(repo.id)}
+                      disabled={scanMutation.isPending}
+                      className="flex items-center gap-1"
+                    >
+                      {scanMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                      Analyze & Parse
                     </Button>
+
+                    <Link href={`/architecture`}>
+                      <Button size="sm" variant="secondary" className="flex items-center gap-1">
+                        <Boxes className="h-3.5 w-3.5" />
+                        Architecture
+                        <ArrowUpRight className="h-3 w-3" />
+                      </Button>
+                    </Link>
+
+                    <Link href={`/docs`}>
+                      <Button size="sm" variant="secondary" className="flex items-center gap-1">
+                        <FileText className="h-3.5 w-3.5" />
+                        Docs
+                        <ArrowUpRight className="h-3 w-3" />
+                      </Button>
+                    </Link>
                   </div>
                 </div>
               </CardContent>
@@ -101,16 +145,27 @@ export default function RepositoriesPage() {
                   </CardDescription>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Badge variant={cr.sync_status === 'synced' ? 'success' : cr.sync_status === 'failed' ? 'destructive' : 'warning'}>
+                  <Badge variant={cr.sync_status === 'synced' ? 'default' : cr.sync_status === 'failed' ? 'destructive' : 'outline'}>
                     {cr.sync_status === 'synced' ? <CheckCircle className="h-3 w-3 mr-1" /> : cr.sync_status === 'failed' ? <XCircle className="h-3 w-3 mr-1" /> : <Clock className="h-3 w-3 mr-1" />}
                     {cr.sync_status}
                   </Badge>
-                  <Badge variant={cr.auto_sync ? 'success' : 'outline'}>{cr.auto_sync ? 'Auto-sync' : 'Manual'}</Badge>
+                  <Badge variant={cr.auto_sync ? 'default' : 'outline'}>{cr.auto_sync ? 'Auto-sync' : 'Manual'}</Badge>
                 </div>
               </CardHeader>
               <CardContent>
-                <div className="text-xs text-muted-foreground">
-                  Last synced: {cr.last_synced_at || 'Never'}
+                <div className="flex items-center justify-between text-xs text-muted-foreground pt-2 border-t">
+                  <div>
+                    Last synced: {cr.last_synced_at || 'Never'}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button size="sm" variant="outline" onClick={() => ghSyncMutation.mutate(cr.id)} disabled={ghSyncMutation.isPending}>
+                      {ghSyncMutation.isPending ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <RefreshCw className="h-3 w-3 mr-1" />}
+                      Sync Now
+                    </Button>
+                    <Link href="/architecture">
+                      <Button size="sm" variant="secondary">View Architecture</Button>
+                    </Link>
+                  </div>
                 </div>
               </CardContent>
             </Card>

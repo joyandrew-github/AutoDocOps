@@ -83,6 +83,14 @@ class RepositoryFile(Base, TimestampMixin):
 
     repository: Mapped["Repository"] = relationship("Repository", back_populates="files")
 
+    @property
+    def checksum(self) -> str | None:
+        return self.sha256_checksum
+
+    @checksum.setter
+    def checksum(self, value: str | None) -> None:
+        self.sha256_checksum = value
+
     def __repr__(self) -> str:
         return f"<RepositoryFile(id={self.id}, path={self.relative_path})>"
 

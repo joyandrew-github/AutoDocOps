@@ -60,6 +60,7 @@ class DocumentationListItem(BaseModel):
     entity_type: str | None = None
     entity_name: str | None = None
     file_path: str | None = None
+    content: str | None = None
     summary: str | None = None
     version: int = 1
     language: str | None = None
