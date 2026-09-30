@@ -129,7 +129,10 @@ class GitHubService:
             ParserService(self.db).parse_repository(core_repo.id)
             ArchitectureService(self.db).generate_architecture(core_repo.id)
             DocumentationService(self.db).generate_documentation(core_repo.id)
-            logger.info(f"Auto-ingested and generated architecture/docs for {cleaned_name} (repo_id={core_repo.id})")
+            from app.db.neo4j import get_neo4j_client
+            from app.engines.graph_engine.graph_sync_service import GraphSyncService
+            GraphSyncService(self.db, get_neo4j_client()).sync_repository(core_repo.id)
+            logger.info(f"Auto-ingested, generated architecture, docs, and knowledge graph for {cleaned_name} (repo_id={core_repo.id})")
         except Exception as e:
             logger.error(f"Auto-ingestion error for {cleaned_name}: {e}")
 
@@ -210,12 +213,15 @@ class GitHubService:
                 ParserService(self.db).parse_repository(cr.repository_id)
                 ArchitectureService(self.db).generate_architecture(cr.repository_id)
                 DocumentationService(self.db).generate_documentation(cr.repository_id)
+                from app.db.neo4j import get_neo4j_client
+                from app.engines.graph_engine.graph_sync_service import GraphSyncService
+                GraphSyncService(self.db, get_neo4j_client()).sync_repository(cr.repository_id)
 
             duration = round(time.time() - start, 3)
             self.gh_repo.update_sync(sync,
                 status="completed",
                 duration_seconds=duration,
-                pipeline_steps={"scan": "ok", "parse": "ok", "architecture": "ok", "docs": "ok"},
+                pipeline_steps={"scan": "ok", "parse": "ok", "graph": "ok", "architecture": "ok", "docs": "ok"},
                 completed_at=datetime.now(timezone.utc),
             )
             self.gh_repo.update_connected_repo(cr, sync_status="synced",

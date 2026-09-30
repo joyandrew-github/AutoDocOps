@@ -8,7 +8,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { toast } from 'sonner'
 import Link from 'next/link'
-import { FolderGit2, RefreshCw, GitBranch, Clock, CheckCircle, XCircle, Loader2, Boxes, FileText, Sparkles, ArrowUpRight } from 'lucide-react'
+import { FolderGit2, RefreshCw, GitBranch, Clock, CheckCircle, XCircle, Loader2, Boxes, FileText, Sparkles, ArrowUpRight, Share2 } from 'lucide-react'
 
 export default function RepositoriesPage() {
   const qc = useQueryClient()
@@ -20,9 +20,10 @@ export default function RepositoriesPage() {
       await api.post(`/api/v1/repositories/${id}/scan`, {})
       await api.post(`/api/v1/repositories/${id}/parse`, {})
       await api.post(`/api/v1/repositories/${id}/architecture/generate`, {})
+      await api.post(`/api/v1/repositories/${id}/graph/sync`, {})
     },
     onSuccess: () => {
-      toast.success('Repository analyzed & architecture generated!')
+      toast.success('Repository analyzed, architecture & knowledge graph generated!')
       qc.invalidateQueries({ queryKey: ['repositories'] })
     },
     onError: () => toast.error('Analysis failed'),
@@ -121,6 +122,14 @@ export default function RepositoriesPage() {
                       <Button size="sm" variant="secondary" className="flex items-center gap-1">
                         <FileText className="h-3.5 w-3.5" />
                         Docs
+                        <ArrowUpRight className="h-3 w-3" />
+                      </Button>
+                    </Link>
+
+                    <Link href={`/graph?repoId=${repo.id}`}>
+                      <Button size="sm" variant="secondary" className="flex items-center gap-1">
+                        <Share2 className="h-3.5 w-3.5 text-primary" />
+                        Knowledge Graph
                         <ArrowUpRight className="h-3 w-3" />
                       </Button>
                     </Link>

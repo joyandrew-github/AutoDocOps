@@ -145,11 +145,13 @@ class AnalyticsBuilder:
         """Get node and relationship counts for a repository."""
         query = (
             "MATCH (r:Repository {uid: $repo_uid}) "
-            "OPTIONAL MATCH (r)-[:CONTAINS*]->(n) "
+            "OPTIONAL MATCH (r)-[*1..4]-(n) "
             "WITH r, collect(DISTINCT n) AS nodes "
-            "UNWIND nodes AS n "
-            "WITH r, n, labels(n) AS lbls "
-            "RETURN lbls[0] AS label, count(n) AS count "
+            "WITH nodes + [r] AS all_nodes "
+            "UNWIND all_nodes AS n "
+            "WITH n, labels(n) AS lbls "
+            "WHERE size(lbls) > 0 "
+            "RETURN lbls[0] AS label, count(DISTINCT n) AS count "
             "ORDER BY count DESC"
         )
         return CypherQuery(query=query, params={"repo_uid": repo_uid})
@@ -181,8 +183,9 @@ class AnalyticsBuilder:
     @staticmethod
     def dependency_graph(repo_uid: str) -> CypherQuery:
         query = (
-            "MATCH (r:Repository {uid: $repo_uid})-[:CONTAINS*]->(f:File)-[:DEPENDS_ON]->(d:Dependency) "
-            "RETURN f.path AS file_path, d.name AS dependency, d.version AS version"
+            "MATCH (r:Repository {uid: $repo_uid})-[:DEPENDS_ON]->(d:Dependency) "
+            "OPTIONAL MATCH (f:File)-[:DEPENDS_ON]->(d) "
+            "RETURN coalesce(f.path, d.source_file, 'package.json') AS file_path, d.name AS dependency, d.version AS version"
         )
         return CypherQuery(query=query, params={"repo_uid": repo_uid})
 
@@ -197,11 +200,73 @@ class AnalyticsBuilder:
     @staticmethod
     def call_graph(repo_uid: str) -> CypherQuery:
         query = (
-            "MATCH (r:Repository {uid: $repo_uid})-[:CONTAINS*]->(:File)-[:DEFINES]->(caller)-[:CALLS]->(callee) "
+            "MATCH (r:Repository {uid: $repo_uid}) "
+            "MATCH (caller)-[:CALLS]->(callee) "
+            "WHERE (r)-[*1..3]-(caller) AND (r)-[*1..3]-(callee) "
             "RETURN caller.name AS caller, labels(caller)[0] AS caller_type, "
             "callee.name AS callee, labels(callee)[0] AS callee_type"
         )
         return CypherQuery(query=query, params={"repo_uid": repo_uid})
+
+    @staticmethod
+    def subgraph(repo_uid: str, limit: int = 70, filter_label: str | None = None) -> CypherQuery:
+        """Get nodes and relationships for visual graph exploration."""
+        if filter_label:
+            query = (
+                "MATCH (r:Repository {uid: $repo_uid}) "
+                "MATCH (r)-[*1..3]-(n) "
+                f"WHERE $filter_label IN labels(n) "
+                "WITH r, collect(DISTINCT n)[..$limit] AS ns "
+                "WITH ns + [r] AS node_list "
+                "UNWIND node_list AS a "
+                "OPTIONAL MATCH (a)-[rel]->(b) "
+                "WHERE b IN node_list "
+                "RETURN "
+                "  collect(DISTINCT { "
+                "    id: a.uid, "
+                "    element_id: elementId(a), "
+                "    label: labels(a)[0], "
+                "    labels: labels(a), "
+                "    name: coalesce(a.name, a.path, a.uid), "
+                "    properties: properties(a) "
+                "  }) AS nodes, "
+                "  [r IN collect(DISTINCT rel) WHERE r IS NOT NULL | { "
+                "    id: elementId(r), "
+                "    source: startNode(r).uid, "
+                "    target: endNode(r).uid, "
+                "    type: type(r), "
+                "    properties: properties(r) "
+                "  }] AS edges"
+            )
+            params = {"repo_uid": repo_uid, "limit": limit, "filter_label": filter_label}
+        else:
+            query = (
+                "MATCH (r:Repository {uid: $repo_uid}) "
+                "MATCH (r)-[*1..2]-(n) "
+                "WITH r, collect(DISTINCT n)[..$limit] AS ns "
+                "WITH ns + [r] AS node_list "
+                "UNWIND node_list AS a "
+                "OPTIONAL MATCH (a)-[rel]->(b) "
+                "WHERE b IN node_list "
+                "RETURN "
+                "  collect(DISTINCT { "
+                "    id: a.uid, "
+                "    element_id: elementId(a), "
+                "    label: labels(a)[0], "
+                "    labels: labels(a), "
+                "    name: coalesce(a.name, a.path, a.uid), "
+                "    properties: properties(a) "
+                "  }) AS nodes, "
+                "  [r IN collect(DISTINCT rel) WHERE r IS NOT NULL | { "
+                "    id: elementId(r), "
+                "    source: startNode(r).uid, "
+                "    target: endNode(r).uid, "
+                "    type: type(r), "
+                "    properties: properties(r) "
+                "  }] AS edges"
+            )
+            params = {"repo_uid": repo_uid, "limit": limit}
+        return CypherQuery(query=query, params=params)
 
     @staticmethod
     def language_statistics(repo_uid: str) -> CypherQuery:

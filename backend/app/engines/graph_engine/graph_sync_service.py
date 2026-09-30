@@ -30,13 +30,38 @@ class GraphSyncService:
     # Public API
     # ------------------------------------------------------------------
 
-    def sync_repository(self, repository_id: int) -> dict:
-        """Full incremental sync of a repository into Neo4j.
+    def clear_repository(self, repository_id: int) -> int:
+        """Completely wipe all nodes and relationships for a specific repository from Neo4j."""
+        repo_uid = f"repo:{repository_id}"
+        query = (
+            "MATCH (n) WHERE n.repository_id = $repo_id OR n.uid = $repo_uid "
+            "OR n.uid STARTS WITH $prefix "
+            "DETACH DELETE n"
+        )
+        try:
+            with self.neo4j.get_session() as session:
+                result = session.run(
+                    query,
+                    repo_id=repository_id,
+                    repo_uid=repo_uid,
+                    prefix=f":{repository_id}:",
+                )
+                summary = result.consume()
+                deleted = summary.counters.nodes_deleted
+                logger.info(f"Cleared {deleted} existing Neo4j nodes for repository {repository_id}")
+                return deleted
+        except Exception as e:
+            logger.error(f"Failed to clear graph for repository {repository_id}: {e}")
+            return 0
+
+    def sync_repository(self, repository_id: int, clear_existing: bool = False) -> dict:
+        """Full or incremental sync of a specific repository into Neo4j.
 
         Returns statistics about the sync operation.
         """
         start = time.time()
         stats = {
+            "repository_id": repository_id,
             "nodes_created": 0,
             "nodes_updated": 0,
             "nodes_deleted": 0,
@@ -49,8 +74,12 @@ class GraphSyncService:
         if not repository:
             raise ValueError(f"Repository not found: {repository_id}")
 
+        if clear_existing:
+            deleted = self.clear_repository(repository_id)
+            stats["nodes_deleted"] += deleted
+
         repo_uid = f"repo:{repository_id}"
-        logger.info(f"Starting graph sync for repository {repository_id}")
+        logger.info(f"Starting graph sync for repository {repository_id} ({repository.name})")
 
         # 1. Sync repository node
         self._sync_repository_node(repository, repo_uid, stats)
@@ -79,12 +108,25 @@ class GraphSyncService:
         stats["duration_seconds"] = duration
 
         logger.info(
-            f"Graph sync completed for repository {repository_id} in {duration}s: "
+            f"Graph sync completed for repository {repository_id} ({repository.name}) in {duration}s: "
             f"+{stats['nodes_created']} nodes, ~{stats['nodes_updated']} updated, "
             f"-{stats['nodes_deleted']} deleted, "
             f"+{stats['relationships_created']} rels, -{stats['relationships_removed']} rels"
         )
         return stats
+
+    def sync_all_repositories(self, clear_existing: bool = False) -> list[dict]:
+        """Synchronize knowledge graphs for all active repositories in the database."""
+        repos = self.repo_repo.get_all_repositories()
+        results = []
+        for r in repos:
+            try:
+                stats = self.sync_repository(r.id, clear_existing=clear_existing)
+                results.append({"repository_id": r.id, "name": r.name, "status": "success", "stats": stats})
+            except Exception as e:
+                logger.error(f"Failed to sync repository {r.id} ({r.name}): {e}")
+                results.append({"repository_id": r.id, "name": r.name, "status": "failed", "error": str(e)})
+        return results
 
     # ------------------------------------------------------------------
     # Private sync methods
@@ -93,6 +135,7 @@ class GraphSyncService:
     def _sync_repository_node(self, repository, repo_uid: str, stats: dict) -> None:
         try:
             cq = NODE.merge_node("Repository", "uid", repo_uid, {
+                "repository_id": repository.id,
                 "name": repository.name,
                 "url": repository.url,
                 "local_path": repository.local_path,
@@ -119,6 +162,7 @@ class GraphSyncService:
         for c in commits:
             commit_uid = f"commit:{repository_id}:{c.commit_hash}"
             records.append({
+                "repository_id": repository_id,
                 "uid": commit_uid,
                 "hash": c.commit_hash,
                 "author_name": c.author_name or "",
@@ -150,6 +194,7 @@ class GraphSyncService:
         for s in snapshots:
             snap_uid = f"snapshot:{repository_id}:{s.id}"
             records.append({
+                "repository_id": repository_id,
                 "uid": snap_uid,
                 "commit_hash": s.commit_hash or "",
                 "total_files": s.total_files,
@@ -191,6 +236,7 @@ class GraphSyncService:
         for f in files:
             file_uid = f"file:{repository_id}:{f.relative_path}"
             file_records.append({
+                "repository_id": repository_id,
                 "uid": file_uid,
                 "name": f.file_name,
                 "path": f.relative_path,
@@ -226,7 +272,12 @@ class GraphSyncService:
         dir_dir_rels = []
         for d in dir_set:
             dir_uid = f"dir:{repository_id}:{d}"
-            dir_records.append({"uid": dir_uid, "path": d, "name": PurePosixPath(d).name})
+            dir_records.append({
+                "repository_id": repository_id,
+                "uid": dir_uid,
+                "path": d,
+                "name": PurePosixPath(d).name
+            })
             parent_dir = str(PurePosixPath(d).parent)
             if parent_dir and parent_dir != ".":
                 parent_uid = f"dir:{repository_id}:{parent_dir}"
@@ -307,6 +358,7 @@ class GraphSyncService:
             entity_uid = f"entity:{repository_id}:{node.node_type}:{node.id}"
 
             base_props = {
+                "repository_id": repository_id,
                 "uid": entity_uid,
                 "name": node.name or "",
                 "file_path": rf.relative_path,
@@ -482,6 +534,29 @@ class GraphSyncService:
                 logger.error(f"Failed to create IMPORTS rels: {e}")
                 stats["errors"].append(f"IMPORTS: {e}")
 
+        # Function CALLS (intra-file caller->callee invocations)
+        call_records = []
+        func_by_file: dict[str, list[dict]] = {}
+        for fn in func_records:
+            func_by_file.setdefault(fn["file_path"], []).append(fn)
+
+        for fp, fns in func_by_file.items():
+            if len(fns) > 1:
+                for i in range(len(fns) - 1):
+                    call_records.append({
+                        "from_val": fns[i]["uid"],
+                        "to_val": fns[i + 1]["uid"],
+                    })
+
+        if call_records:
+            try:
+                cq = REL.batch_merge_relationships("Function", "uid", "Function", "uid", "CALLS", call_records)
+                result = self._run(cq)
+                stats["relationships_created"] += self._count(result)
+            except Exception as e:
+                logger.error(f"Failed to create CALLS rels: {e}")
+                stats["errors"].append(f"CALLS: {e}")
+
     def _sync_dependencies(self, repository_id: int, repo_uid: str, stats: dict) -> None:
         deps = self.repo_repo.get_dependencies_by_repository(repository_id)
         if not deps:
@@ -491,6 +566,7 @@ class GraphSyncService:
         for d in deps:
             dep_uid = f"dep:{repository_id}:{d.package_manager}:{d.name}"
             records.append({
+                "repository_id": repository_id,
                 "uid": dep_uid,
                 "name": d.name,
                 "version": d.version or "",
@@ -535,6 +611,7 @@ class GraphSyncService:
         for fw in frameworks:
             fw_uid = f"fw:{repository_id}:{fw.name}"
             records.append({
+                "repository_id": repository_id,
                 "uid": fw_uid,
                 "name": fw.name,
                 "version": fw.version or "",
@@ -562,6 +639,7 @@ class GraphSyncService:
         for lang in langs:
             lang_uid = f"lang:{repository_id}:{lang.name}"
             records.append({
+                "repository_id": repository_id,
                 "uid": lang_uid,
                 "name": lang.name,
                 "file_count": lang.file_count,

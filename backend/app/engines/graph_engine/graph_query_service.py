@@ -34,30 +34,97 @@ class GraphQueryService:
         except Exception as e:
             logger.error(f"Failed to get graph statistics: {e}")
 
-        # Total relationships
-        rel_count = 0
+        # Relationship counts by type and total
+        rel_counts = {}
         try:
             cq_rels = CypherQuery(
                 query=(
-                    "MATCH (r:Repository {uid: $repo_uid})-[:CONTAINS*]->(n) "
-                    "OPTIONAL MATCH (n)-[rel]->() "
-                    "RETURN count(rel) AS count"
+                    "MATCH (r:Repository {uid: $repo_uid}) "
+                    "OPTIONAL MATCH (r)-[*1..4]-(n) "
+                    "WITH r, collect(DISTINCT n) AS ns "
+                    "WITH ns + [r] AS nodes "
+                    "UNWIND nodes AS a "
+                    "MATCH (a)-[rel]->(b) "
+                    "WHERE b IN nodes "
+                    "RETURN type(rel) AS rel_type, count(DISTINCT rel) AS count "
+                    "ORDER BY count DESC"
                 ),
                 params={"repo_uid": repo_uid},
             )
             with self.neo4j.get_session() as session:
                 result = session.run(cq_rels.query, **cq_rels.params)
-                record = result.single()
-                if record:
-                    rel_count = record["count"]
+                for record in result:
+                    rel_counts[record["rel_type"]] = record["count"]
         except Exception as e:
             logger.error(f"Failed to count relationships: {e}")
+
+        total_rels = sum(rel_counts.values())
 
         return {
             "repository_id": repository_id,
             "total_nodes": sum(label_counts.values()),
-            "total_relationships": rel_count,
+            "total_relationships": total_rels,
             "node_counts": label_counts,
+            "node_labels": [{"label": k, "count": v} for k, v in label_counts.items()],
+            "relationship_counts": rel_counts,
+            "relationship_types": [{"type": k, "count": v} for k, v in rel_counts.items()],
+        }
+
+    def get_global_statistics(self) -> dict:
+        """Get overall statistics across all repositories in Neo4j."""
+        label_counts = {}
+        rel_counts = {}
+        try:
+            with self.neo4j.get_session() as session:
+                n_res = session.run("MATCH (n) RETURN labels(n)[0] AS label, count(n) AS count ORDER BY count DESC")
+                for rec in n_res:
+                    if rec["label"]:
+                        label_counts[rec["label"]] = rec["count"]
+                r_res = session.run("MATCH ()-[r]->() RETURN type(r) AS rel_type, count(r) AS count ORDER BY count DESC")
+                for rec in r_res:
+                    if rec["rel_type"]:
+                        rel_counts[rec["rel_type"]] = rec["count"]
+        except Exception as e:
+            logger.error(f"Failed to get global statistics: {e}")
+
+        return {
+            "repository_id": 0,
+            "total_nodes": sum(label_counts.values()),
+            "total_relationships": sum(rel_counts.values()),
+            "node_counts": label_counts,
+            "node_labels": [{"label": k, "count": v} for k, v in label_counts.items()],
+            "relationship_counts": rel_counts,
+            "relationship_types": [{"type": k, "count": v} for k, v in rel_counts.items()],
+        }
+
+    def get_subgraph(self, repository_id: int, limit: int = 70, filter_label: str | None = None) -> dict:
+        """Get visual subgraph nodes and edges for ReactFlow visualizer."""
+        repo_uid = f"repo:{repository_id}"
+        cq = ANALYTICS.subgraph(repo_uid, limit, filter_label)
+        try:
+            with self.neo4j.get_session() as session:
+                result = session.run(cq.query, **cq.params)
+                record = result.single()
+                if record:
+                    raw_nodes = record["nodes"] or []
+                    raw_edges = record["edges"] or []
+                    nodes = [n for n in raw_nodes if n and n.get("id")]
+                    edges = [e for e in raw_edges if e and e.get("source") and e.get("target")]
+                    return {
+                        "repository_id": repository_id,
+                        "nodes": nodes,
+                        "edges": edges,
+                        "total_nodes": len(nodes),
+                        "total_edges": len(edges),
+                    }
+        except Exception as e:
+            logger.error(f"Failed to get subgraph for repo {repository_id}: {e}")
+        return {
+            "repository_id": repository_id,
+            "nodes": [],
+            "edges": [],
+            "total_nodes": 0,
+            "total_edges": 0,
         }
 
     def get_node(self, element_id: str) -> dict | None:

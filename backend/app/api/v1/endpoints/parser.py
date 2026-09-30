@@ -53,6 +53,15 @@ def parse_repository(
     service = ParserService(db)
     try:
         run = service.parse_repository(repository_id)
+
+        # Automatically update repository-specific knowledge graph
+        try:
+            from app.db.neo4j import get_neo4j_client
+            from app.engines.graph_engine.graph_sync_service import GraphSyncService
+            GraphSyncService(db, get_neo4j_client()).sync_repository(repository_id)
+        except Exception as ge:
+            logger.warning(f"Auto graph sync after parse for repository {repository_id}: {ge}")
+
         return ParseRequestResponse(
             parser_run=ParserRunResponse.model_validate(run),
             message=f"Parsing {'completed' if run.status == 'completed' else 'failed'}. "
