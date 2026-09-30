@@ -111,6 +111,45 @@ class DocumentationRepository:
         self.db.commit()
         return count
 
+    def delete_all_by_repository(self, repository_id: int) -> int:
+        count = (
+            self.db.query(Documentation)
+            .filter(Documentation.repository_id == repository_id)
+            .delete()
+        )
+        self.db.commit()
+        return count
+
+    def delete_fragmented_docs_by_repository(self, repository_id: int) -> int:
+        count = (
+            self.db.query(Documentation)
+            .filter(
+                Documentation.repository_id == repository_id,
+                Documentation.doc_type != "master_project_doc",
+            )
+            .delete()
+        )
+        self.db.commit()
+        return count
+
+    def get_master_documentation(self, repository_id: int) -> Documentation | None:
+        doc = (
+            self.db.query(Documentation)
+            .filter(
+                Documentation.repository_id == repository_id,
+                Documentation.doc_type == "master_project_doc",
+            )
+            .first()
+        )
+        if not doc:
+            doc = (
+                self.db.query(Documentation)
+                .filter(Documentation.repository_id == repository_id)
+                .order_by(Documentation.created_at.desc())
+                .first()
+            )
+        return doc
+
     def count_documentations(self, repository_id: int) -> int:
         return self.db.query(Documentation).filter(Documentation.repository_id == repository_id).count()
 

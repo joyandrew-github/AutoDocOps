@@ -31,6 +31,17 @@ class RepositoryResponse(BaseModel):
     is_active: bool
     created_at: datetime
     updated_at: datetime
+    # Real-time status fields
+    sync_status: str | None = None
+    last_synced_at: datetime | None = None
+    github_connected: bool = False
+    github_repo_id: int | None = None
+    github_full_name: str | None = None
+    total_files: int = 0
+    total_scans: int = 0
+    languages: list[str] = Field(default_factory=list)
+    graph_nodes: int = 0
+    graph_relationships: int = 0
 
     model_config = {"from_attributes": True}
 

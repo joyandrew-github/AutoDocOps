@@ -1,5 +1,6 @@
 """DocumentationService — orchestrates incremental documentation generation."""
 import hashlib
+import os
 import re
 import time
 from datetime import datetime, timezone
@@ -15,6 +16,7 @@ from app.core.logging import get_logger
 logger = get_logger(__name__)
 
 DOC_TYPES = [
+    "master_project_doc",
     "repository_overview",
     "file",
     "class",
@@ -24,6 +26,8 @@ DOC_TYPES = [
     "onboarding",
     "dependency",
 ]
+
+DEFAULT_DOC_TYPES = ["master_project_doc"]
 
 
 class DocumentationService:
@@ -46,9 +50,9 @@ class DocumentationService:
         repository_id: int,
         doc_types: list[str] | None = None,
     ) -> dict:
-        """Generate documentation for a repository. Returns job stats."""
+        """Generate documentation for a repository. Defaults to single comprehensive master doc."""
         start = time.time()
-        requested = doc_types or DOC_TYPES
+        requested = doc_types if doc_types is not None else DEFAULT_DOC_TYPES
         stats = {
             "documents_created": 0,
             "documents_updated": 0,
@@ -69,7 +73,11 @@ class DocumentationService:
             # Handle deletions from memory engine first
             self._handle_deletions(repository_id, stats)
 
-            # Generate each requested doc type
+            # Master project documentation (Single unified dossier)
+            if "master_project_doc" in requested:
+                self._generate_master_project_doc(repository_id, repository, stats)
+
+            # Legacy granular doc types (if explicitly requested)
             if "repository_overview" in requested:
                 self._generate_repository_overview(repository_id, repository, stats)
 
@@ -165,6 +173,31 @@ class DocumentationService:
                 "format": format,
             })
         return results
+
+    def get_master_documentation(self, repository_id: int):
+        """Retrieve the single master project documentation for a repository."""
+        return self.doc_repo.get_master_documentation(repository_id)
+
+    def generate_master_documentation(self, repository_id: int) -> dict:
+        """Generate or update the single master project documentation for a repository."""
+        return self.generate_documentation(repository_id, doc_types=["master_project_doc"])
+
+    def export_master_documentation(self, repository_id: int, format: str = "markdown") -> dict | None:
+        """Export the single master documentation in markdown or HTML/PDF-ready format."""
+        doc = self.get_master_documentation(repository_id)
+        if not doc or not doc.content:
+            return None
+        if format in ["html", "pdf"]:
+            content = self.generator.to_html(doc.content, title=doc.title)
+        else:
+            content = doc.content
+        return {
+            "title": doc.title,
+            "doc_type": doc.doc_type,
+            "filename": f"{self._slugify(doc.title)}.{'html' if format in ['html', 'pdf'] else 'md'}",
+            "content": content,
+            "format": format,
+        }
 
     # ------------------------------------------------------------------
     # Private — incremental helpers
@@ -270,6 +303,183 @@ class DocumentationService:
     # ------------------------------------------------------------------
     # Generators per doc type
     # ------------------------------------------------------------------
+
+    def _get_neo4j_stats(self, repository_id: int) -> dict:
+        """Fetch node and relationship counts from Neo4j knowledge graph."""
+        try:
+            from app.db.neo4j import get_neo4j_client
+            client = get_neo4j_client()
+            if not client.driver:
+                client.connect()
+            session = client.get_session()
+            try:
+                n_res = session.run("MATCH (n) WHERE n.repository_id = $repo_id RETURN count(n) AS cnt", repo_id=repository_id).single()
+                r_res = session.run("MATCH (n)-[r]->(m) WHERE n.repository_id = $repo_id AND m.repository_id = $repo_id RETURN count(r) AS cnt", repo_id=repository_id).single()
+                return {
+                    "nodes_count": n_res["cnt"] if n_res else 0,
+                    "relationships_count": r_res["cnt"] if r_res else 0,
+                }
+            finally:
+                session.close()
+        except Exception as e:
+            logger.debug(f"Could not retrieve Neo4j stats for repository {repository_id}: {e}")
+            return {"nodes_count": 0, "relationships_count": 0}
+
+    def _extract_code_intelligence(self, repository, files, funcs, classes) -> tuple[dict, list[dict], list[dict]]:
+        """Extract subsystems, discovered routes, and discovered env vars from repository files."""
+        subsystems: dict[str, list[dict]] = {
+            "controllers": [],
+            "routes": [],
+            "models": [],
+            "middleware": [],
+            "config": [],
+            "utils": [],
+            "root": [],
+        }
+
+        for f in files:
+            p = (f.relative_path if hasattr(f, "relative_path") else f.get("relative_path", "")).lower()
+            fdata = {"file_name": getattr(f, "file_name", ""), "relative_path": getattr(f, "relative_path", "")} if hasattr(f, "relative_path") else f
+            if "controller" in p:
+                subsystems["controllers"].append(fdata)
+            elif "route" in p:
+                subsystems["routes"].append(fdata)
+            elif "model" in p and not p.endswith(".json"):
+                subsystems["models"].append(fdata)
+            elif "middleware" in p:
+                subsystems["middleware"].append(fdata)
+            elif "config" in p:
+                subsystems["config"].append(fdata)
+            elif "util" in p or "helper" in p:
+                subsystems["utils"].append(fdata)
+            elif "/" not in p:
+                subsystems["root"].append(fdata)
+
+        discovered_routes = []
+        discovered_envs = []
+        seen_env_names = set()
+        seen_route_signatures = set()
+
+        local_path = getattr(repository, "local_path", None)
+        if local_path and os.path.exists(local_path):
+            try:
+                for root, dirs, filenames in os.walk(local_path):
+                    if any(ignored in root for ignored in ["node_modules", ".git", "venv", "__pycache__", ".next", "dist", "build"]):
+                        continue
+                    for fname in filenames:
+                        if not fname.endswith((".js", ".ts", ".py", ".json", ".env.example")):
+                            continue
+                        fpath = os.path.join(root, fname)
+                        rel_path = os.path.relpath(fpath, local_path).replace("\\", "/")
+                        try:
+                            with open(fpath, "r", encoding="utf-8", errors="ignore") as fh:
+                                content = fh.read()
+
+                            # Discover environment variables
+                            for m in re.finditer(r"process\.env\.([A-Z0-9_]+)", content):
+                                vname = m.group(1)
+                                if vname not in seen_env_names:
+                                    seen_env_names.add(vname)
+                                    discovered_envs.append({"name": vname})
+
+                            for m in re.finditer(r"(?:os\.environ\.get|os\.getenv)\s*\(\s*['\"]([A-Z0-9_]+)['\"]", content):
+                                vname = m.group(1)
+                                if vname not in seen_env_names:
+                                    seen_env_names.add(vname)
+                                    discovered_envs.append({"name": vname})
+
+                            # Discover routes
+                            for m in re.finditer(
+                                r"(?:router|app)\.(get|post|put|delete|patch)\s*\(\s*['\"]([^'\"]+)['\"]\s*(?:,\s*([^,\)]+))?",
+                                content,
+                            ):
+                                method = m.group(1).upper()
+                                path = m.group(2)
+                                raw_handler = (m.group(3) or "").strip()
+                                handler = raw_handler.split(",")[-1].strip() if raw_handler else "handler"
+                                sig = f"{method}:{path}"
+                                if sig not in seen_route_signatures:
+                                    seen_route_signatures.add(sig)
+                                    discovered_routes.append({
+                                        "method": method,
+                                        "path": path,
+                                        "handler": handler,
+                                        "file": rel_path,
+                                    })
+
+                            for m in re.finditer(
+                                r"@(?:app|router|bp)\.(get|post|put|delete|patch)\s*\(\s*['\"]([^'\"]+)['\"]",
+                                content,
+                            ):
+                                method = m.group(1).upper()
+                                path = m.group(2)
+                                sig = f"{method}:{path}"
+                                if sig not in seen_route_signatures:
+                                    seen_route_signatures.add(sig)
+                                    discovered_routes.append({
+                                        "method": method,
+                                        "path": path,
+                                        "handler": "route_handler",
+                                        "file": rel_path,
+                                    })
+                        except Exception:
+                            continue
+            except Exception as e:
+                logger.warning(f"Error scanning local files for code intelligence: {e}")
+
+        return subsystems, discovered_routes, discovered_envs
+
+    def _generate_master_project_doc(self, repository_id: int, repository, stats: dict) -> None:
+        try:
+            # Clean up old fragmented/unwanted documents so repository maintains ONE unified master doc
+            self.doc_repo.delete_fragmented_docs_by_repository(repository_id)
+
+            langs = self.repo_repo.get_languages_by_repository(repository_id)
+            fws = self.repo_repo.get_frameworks_by_repository(repository_id)
+            deps = self.repo_repo.get_dependencies_by_repository(repository_id)
+            files = self.repo_repo.get_files_by_repository(repository_id)
+            funcs = self.parser_repo.get_functions_by_repository(repository_id)
+            classes = self.parser_repo.get_classes_by_repository(repository_id)
+
+            graph_stats = self._get_neo4j_stats(repository_id)
+            subsystems, routes, env_vars = self._extract_code_intelligence(repository, files, funcs, classes)
+
+            res = self.generator.generate_project_master_doc(
+                repo_name=repository.name,
+                description=repository.description,
+                url=repository.url,
+                default_branch=repository.default_branch,
+                languages=[{"name": getattr(l, "name", ""), "file_count": getattr(l, "file_count", 0), "percentage": getattr(l, "percentage", 0)} for l in langs],
+                frameworks=[{"name": getattr(f, "name", ""), "version": getattr(f, "version", None), "confidence": getattr(f, "confidence", 1.0), "detected_by": getattr(f, "detected_by", "Manifest")} for f in fws],
+                dependencies=[{"name": getattr(d, "name", ""), "version": getattr(d, "version", None), "package_manager": getattr(d, "package_manager", "npm"), "source_file": getattr(d, "source_file", None)} for d in deps],
+                files=[{"file_name": getattr(f, "file_name", ""), "relative_path": getattr(f, "relative_path", ""), "language": getattr(f, "language", ""), "size_bytes": getattr(f, "size_bytes", 0)} for f in files],
+                functions=[{"name": getattr(fn, "name", ""), "parameters": getattr(fn, "parameters", None), "return_type": getattr(fn, "return_type", None), "is_async": getattr(fn, "is_async", False), "docstring": getattr(fn, "docstring", None), "start_line": getattr(fn, "start_line", 1), "end_line": getattr(fn, "end_line", 1), "file_path": getattr(fn, "file_path", "")} for fn in funcs],
+                classes=[{"name": getattr(c, "name", ""), "bases": getattr(c, "bases", None), "docstring": getattr(c, "docstring", None), "start_line": getattr(c, "start_line", 1), "end_line": getattr(c, "end_line", 1)} for c in classes],
+                subsystems=subsystems,
+                routes=routes,
+                env_vars=env_vars,
+                graph_stats=graph_stats,
+            )
+
+            if isinstance(res, tuple) and len(res) == 3:
+                content, summary, sections = res
+            else:
+                content, summary, sections = ("# Master Project Documentation", f"Documentation for {repository.name}", [])
+
+            self._store_or_update(
+                repository_id=repository_id,
+                doc_type="master_project_doc",
+                title=f"{repository.name} — Master Project Documentation",
+                slug="master-documentation",
+                content=content,
+                summary=summary,
+                sections=sections,
+                stats=stats,
+            )
+        except Exception as e:
+            logger.error(f"Failed to generate master project doc for repo {repository_id}: {e}")
+            stats["documents_failed"] += 1
+            stats["errors"].append(f"master_project_doc: {e}")
 
     def _generate_repository_overview(self, repository_id: int, repository, stats: dict) -> None:
         try:

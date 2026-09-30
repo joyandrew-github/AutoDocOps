@@ -1,5 +1,6 @@
 'use client'
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, Suspense } from 'react'
+import { useSearchParams, useRouter } from 'next/navigation'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
@@ -13,49 +14,112 @@ import { Boxes, GitBranch, AlertTriangle, RefreshCw, FolderGit2, Loader2, Sparkl
 function MermaidDiagram({ code }: { code: string }) {
   const ref = useRef<HTMLDivElement>(null)
   const [svg, setSvg] = useState('')
+  const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    if (!code) {
+    // Remove any stray error elements created by Mermaid on document.body
+    const cleanMermaidStray = () => {
+      if (typeof document !== 'undefined') {
+        document.querySelectorAll('div[id^="dmermaid"]').forEach(el => el.remove())
+      }
+    }
+
+    if (!code || !code.trim()) {
       setSvg('')
+      setError(null)
       setLoading(false)
+      cleanMermaidStray()
       return
     }
+
     setLoading(true)
+    setError(null)
     let cancelled = false
-    import('mermaid').then(m => {
-      m.default.initialize({
-        startOnLoad: false,
-        theme: 'dark',
-        securityLevel: 'loose',
-        flowchart: { curve: 'basis', htmlLabels: true },
-      })
-      const id = 'mermaid-' + Math.random().toString(36).slice(2, 9)
-      m.default.render(id, code).then(({ svg }) => {
+
+    import('mermaid').then(async (m) => {
+      try {
+        m.default.initialize({
+          startOnLoad: false,
+          theme: 'dark',
+          securityLevel: 'loose',
+          suppressErrorRendering: true,
+          flowchart: { curve: 'basis', htmlLabels: true },
+        } as any)
+
+        // Clean any stray elements before rendering
+        cleanMermaidStray()
+
+        // Validate syntax first
+        const isValid = await m.default.parse(code, { suppressErrors: true }).catch(() => false)
+        if (!isValid) {
+          if (!cancelled) {
+            cleanMermaidStray()
+            setError('Diagram definition could not be parsed by Mermaid.')
+            setLoading(false)
+          }
+          return
+        }
+
+        const id = 'mermaid_' + Math.random().toString(36).replace(/[^a-z0-9]/g, '').slice(0, 8)
+        const { svg: renderedSvg } = await m.default.render(id, code)
+
         if (!cancelled) {
-          setSvg(svg)
+          cleanMermaidStray()
+          setSvg(renderedSvg)
           setLoading(false)
         }
-      }).catch((err) => {
+      } catch (err: any) {
         if (!cancelled) {
-          setSvg(`<div class="p-4 bg-muted text-muted-foreground text-xs rounded font-mono overflow-auto max-h-96 whitespace-pre">${code}</div>`)
+          cleanMermaidStray()
+          setError(err?.message || 'Error rendering Mermaid diagram')
           setLoading(false)
         }
-      })
+      }
+    }).catch(err => {
+      if (!cancelled) {
+        cleanMermaidStray()
+        setError('Failed to load Mermaid module')
+        setLoading(false)
+      }
     })
-    return () => { cancelled = true }
+
+    return () => {
+      cancelled = true
+      cleanMermaidStray()
+    }
   }, [code])
 
   if (loading) {
     return <div className="h-64 flex items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
   }
 
-  return <div ref={ref} className="overflow-auto max-h-[600px] flex justify-center items-center py-4" dangerouslySetInnerHTML={{ __html: svg }} />
+  if (error) {
+    return (
+      <div className="p-4 rounded-lg border border-amber-500/20 bg-muted/40 space-y-2 w-full my-2">
+        <div className="flex items-center gap-2 text-amber-500 text-xs font-semibold">
+          <AlertTriangle className="h-4 w-4" />
+          <span>Diagram Render Warning</span>
+        </div>
+        <p className="text-xs text-muted-foreground">{error}</p>
+        <pre className="text-xs bg-background/60 p-3 rounded font-mono overflow-auto max-h-60 whitespace-pre text-foreground/80">{code}</pre>
+      </div>
+    )
+  }
+
+  return (
+    <div
+      ref={ref}
+      className="overflow-auto max-h-[600px] w-full flex justify-center items-center py-4 [&>svg]:max-w-full [&>svg]:h-auto"
+      dangerouslySetInnerHTML={{ __html: svg }}
+    />
+  )
 }
 
-export default function ArchitecturePage() {
+function ArchitecturePageContent() {
   const qc = useQueryClient()
-  const [repoId, setRepoId] = useState<number>(9)
+  const router = useRouter()
+  const searchParams = useSearchParams()
 
   const reposQuery = useQuery({
     queryKey: ['repositories'],
@@ -64,11 +128,28 @@ export default function ArchitecturePage() {
 
   const repoList: any[] = reposQuery.data || []
 
+  // Initialize repoId from query param or default
+  const paramRepoId = searchParams.get('repoId') ? Number(searchParams.get('repoId')) : null
+  const [repoId, setRepoId] = useState<number>(paramRepoId || 9)
+
+  useEffect(() => {
+    if (paramRepoId && paramRepoId !== repoId) {
+      setRepoId(paramRepoId)
+    }
+  }, [paramRepoId])
+
   useEffect(() => {
     if (repoList.length > 0 && !repoList.some((r: any) => r.id === repoId)) {
-      setRepoId(repoList[0].id)
+      const defaultId = repoList[0].id
+      setRepoId(defaultId)
+      router.replace(`/architecture?repoId=${defaultId}`)
     }
-  }, [repoList, repoId])
+  }, [repoList, repoId, router])
+
+  const handleRepoChange = (newId: number) => {
+    setRepoId(newId)
+    router.replace(`/architecture?repoId=${newId}`)
+  }
 
   const archListQuery = useQuery({
     queryKey: ['architecture', repoId],
@@ -168,7 +249,7 @@ export default function ArchitecturePage() {
             <FolderGit2 className="h-4 w-4 text-primary" />
             <select
               value={repoId}
-              onChange={(e) => setRepoId(Number(e.target.value))}
+              onChange={(e) => handleRepoChange(Number(e.target.value))}
               className="bg-transparent text-sm font-medium focus:outline-none cursor-pointer"
             >
               {repoList.map((r: any) => (
@@ -266,7 +347,7 @@ export default function ArchitecturePage() {
                 {layerMermaid ? (
                   <MermaidDiagram code={layerMermaid} />
                 ) : (
-                  <div className="p-8 text-center text-muted-foreground">Click "Generate Architecture" to produce diagrams.</div>
+                  <div className="p-8 text-center text-muted-foreground">Click &quot;Generate Architecture&quot; to produce diagrams.</div>
                 )}
               </CardContent>
             </Card>
@@ -314,7 +395,7 @@ export default function ArchitecturePage() {
               {depMermaid ? (
                 <MermaidDiagram code={depMermaid} />
               ) : (
-                <div className="p-8 text-center text-muted-foreground">Click "Generate Architecture" to analyze dependencies.</div>
+                <div className="p-8 text-center text-muted-foreground">Click &quot;Generate Architecture&quot; to analyze dependencies.</div>
               )}
             </CardContent>
           </Card>
@@ -333,7 +414,7 @@ export default function ArchitecturePage() {
               {callMermaid ? (
                 <MermaidDiagram code={callMermaid} />
               ) : (
-                <div className="p-8 text-center text-muted-foreground">Click "Generate Architecture" to map function call chains.</div>
+                <div className="p-8 text-center text-muted-foreground">Click &quot;Generate Architecture&quot; to map function call chains.</div>
               )}
             </CardContent>
           </Card>
@@ -352,7 +433,7 @@ export default function ArchitecturePage() {
               {compMermaid ? (
                 <MermaidDiagram code={compMermaid} />
               ) : (
-                <div className="p-8 text-center text-muted-foreground">Click "Generate Architecture" to detect components.</div>
+                <div className="p-8 text-center text-muted-foreground">Click &quot;Generate Architecture&quot; to detect components.</div>
               )}
             </CardContent>
           </Card>
@@ -391,5 +472,18 @@ export default function ArchitecturePage() {
         </TabsContent>
       </Tabs>
     </div>
+  )
+}
+
+export default function ArchitecturePage() {
+  return (
+    <Suspense fallback={
+      <div className="p-6 space-y-4">
+        <Skeleton className="h-10 w-64" />
+        <Skeleton className="h-40 w-full" />
+      </div>
+    }>
+      <ArchitecturePageContent />
+    </Suspense>
   )
 }

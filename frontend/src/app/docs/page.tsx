@@ -1,27 +1,48 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Suspense } from 'react'
+import { useSearchParams, useRouter } from 'next/navigation'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { toast } from 'sonner'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
-  FileText, Download, RefreshCw, Search, Loader2, FolderGit2, Sparkles,
-  Copy, Check, Eye, X, BookOpen, Layers
+  FileText,
+  Download,
+  Printer,
+  RefreshCw,
+  Loader2,
+  FolderGit2,
+  Sparkles,
+  Copy,
+  Check,
+  BookOpen,
+  Layers,
+  Code2,
+  Network,
+  Boxes,
+  Database,
+  Terminal,
+  ExternalLink,
+  ChevronRight,
+  ShieldCheck,
+  FileCheck,
 } from 'lucide-react'
 
-export default function DocsPage() {
+function DocsContent() {
   const qc = useQueryClient()
-  const [searchTerm, setSearchTerm] = useState('')
-  const [repoId, setRepoId] = useState<number>(10)
-  const [selectedDoc, setSelectedDoc] = useState<any>(null)
+  const searchParams = useSearchParams()
+  const router = useRouter()
+  const initialRepoId = Number(searchParams.get('repoId')) || 10
+  const [repoId, setRepoId] = useState<number>(initialRepoId)
   const [copied, setCopied] = useState(false)
+  const [activeSection, setActiveSection] = useState<number>(0)
 
+  // Fetch all repositories for repository selector
   const reposQuery = useQuery({
     queryKey: ['repositories'],
     queryFn: () => api.get('/api/v1/repositories'),
@@ -29,42 +50,67 @@ export default function DocsPage() {
 
   const repoList: any[] = reposQuery.data || []
 
+  // Sync repoId with searchParams if present
+  useEffect(() => {
+    const urlRepoId = Number(searchParams.get('repoId'))
+    if (urlRepoId && urlRepoId !== repoId) {
+      setRepoId(urlRepoId)
+    }
+  }, [searchParams])
+
+  // Select valid repo if current is not in list
   useEffect(() => {
     if (repoList.length > 0 && !repoList.some((r: any) => r.id === repoId)) {
       setRepoId(repoList[0].id)
     }
   }, [repoList, repoId])
 
-  const docs = useQuery({
-    queryKey: ['docs', repoId],
-    queryFn: () => api.get(`/api/v1/repositories/${repoId}/documentation`).catch(() => []),
+  const currentRepo = repoList.find((r: any) => r.id === repoId)
+
+  // Query master documentation for this repository
+  const masterDocQuery = useQuery({
+    queryKey: ['master-doc', repoId],
+    queryFn: () => api.get(`/api/v1/repositories/${repoId}/documentation/master`),
     enabled: !!repoId,
   })
 
+  const doc = masterDocQuery.data
+
+  // Mutation to regenerate master documentation
   const generateMutation = useMutation({
     mutationFn: () => api.post(`/api/v1/repositories/${repoId}/documentation/generate`, {}),
     onSuccess: (data: any) => {
-      toast.success(`Documentation generated! ${data.documents_created + data.documents_updated} documents ready.`)
-      qc.invalidateQueries({ queryKey: ['docs', repoId] })
+      toast.success(`Master Documentation updated! 1 unified technical dossier is ready.`)
+      qc.invalidateQueries({ queryKey: ['master-doc', repoId] })
+      masterDocQuery.refetch()
     },
-    onError: () => toast.error('Generation failed'),
+    onError: () => toast.error('Documentation generation failed'),
   })
 
-  const docList: any[] = docs.data || []
-  const filtered = docList.filter((d: any) =>
-    !searchTerm ||
-    d.title?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    d.doc_type?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    d.file_path?.toLowerCase().includes(searchTerm.toLowerCase())
-  )
+  const handleRepoChange = (newId: number) => {
+    setRepoId(newId)
+    router.push(`/docs?repoId=${newId}`)
+  }
 
-  const docTypes = [...new Set(docList.map((d: any) => d.doc_type || 'other'))]
-  const currentRepo = repoList.find((r: any) => r.id === repoId)
+  // Download as PDF (Opens print-optimized document view with auto-trigger print dialog)
+  const downloadAsPDF = () => {
+    const exportUrl = `http://localhost:8000/api/v1/repositories/${repoId}/documentation/master/export?format=html&print=true`
+    const printWindow = window.open(exportUrl, '_blank')
+    if (!printWindow) {
+      // Fallback to in-page window.print
+      window.print()
+    }
+    toast.success('Print-ready view opened. Select "Save as PDF" to save.')
+  }
 
-  // Download a single document as markdown
-  const downloadDoc = (doc: any) => {
-    const filename = `${doc.slug || doc.title.replace(/[^a-zA-Z0-9_-]/g, '_')}.md`
-    const blob = new Blob([doc.content || `# ${doc.title}\n\n${doc.summary || ''}`], { type: 'text/markdown;charset=utf-8' })
+  // Download raw markdown file
+  const downloadMarkdown = () => {
+    if (!doc?.content) {
+      toast.error('No documentation content to download')
+      return
+    }
+    const filename = `${currentRepo?.name || 'repository'}_master_documentation.md`
+    const blob = new Blob([doc.content], { type: 'text/markdown;charset=utf-8' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
@@ -76,50 +122,52 @@ export default function DocsPage() {
     toast.success(`Downloaded ${filename}`)
   }
 
-  // Download all docs combined as a complete repository documentation bundle
-  const downloadAllDocs = () => {
-    if (docList.length === 0) {
-      toast.error('No documentation to export')
-      return
-    }
-    const combinedContent = docList.map(doc =>
-      `---\n# ${doc.title}\n**Type:** ${doc.doc_type} | **Path:** ${doc.file_path || 'N/A'}\n\n${doc.content || doc.summary || ''}\n\n`
-    ).join('\n---\n\n')
-
-    const filename = `${currentRepo?.name || 'repository'}_complete_docs.md`
-    const blob = new Blob([combinedContent], { type: 'text/markdown;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = filename
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
-    URL.revokeObjectURL(url)
-    toast.success(`Exported complete documentation bundle (${docList.length} documents)`)
-  }
-
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text)
+  // Copy full markdown to clipboard
+  const copyMarkdown = () => {
+    if (!doc?.content) return
+    navigator.clipboard.writeText(doc.content)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
-    toast.success('Copied to clipboard')
+    toast.success('Complete documentation copied to clipboard')
   }
 
+  // Smooth scroll to chapter
+  const scrollToChapter = (index: number) => {
+    setActiveSection(index)
+    const el = document.getElementById(`chapter-${index}`)
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+  }
+
+  const sections: any[] = doc?.sections || []
+
   return (
-    <div className="p-6 space-y-6">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+    <div className="p-4 md:p-6 space-y-6 max-w-7xl mx-auto">
+      {/* Top Header & Actions Bar */}
+      <div className="no-print flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b">
         <div>
-          <h1 className="text-3xl font-bold">Documentation Intelligence</h1>
-          <p className="text-muted-foreground">Auto-generated API reference, file docs, and architectural guides for {currentRepo?.name}</p>
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Master Project Documentation</h1>
+            <Badge variant="secondary" className="text-xs bg-primary/10 text-primary border-primary/20">
+              Unified Dossier
+            </Badge>
+          </div>
+          <p className="text-sm text-muted-foreground mt-1">
+            Complete technical specification, tech stack matrix, API routes, functions, and architecture for{' '}
+            <span className="font-semibold text-foreground">{currentRepo?.name || 'Repository'}</span>
+          </p>
         </div>
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-2 bg-card border rounded-md px-3 py-1.5 shadow-sm">
-            <FolderGit2 className="h-4 w-4 text-primary" />
+
+        {/* Action Controls */}
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Repository Selector Dropdown */}
+          <div className="flex items-center gap-2 bg-card border rounded-md px-3 py-1.5 shadow-sm text-sm">
+            <FolderGit2 className="h-4 w-4 text-primary shrink-0" />
             <select
               value={repoId}
-              onChange={(e) => setRepoId(Number(e.target.value))}
-              className="bg-transparent text-sm font-medium focus:outline-none cursor-pointer"
+              onChange={(e) => handleRepoChange(Number(e.target.value))}
+              className="bg-transparent font-medium focus:outline-none cursor-pointer pr-2"
             >
               {repoList.map((r: any) => (
                 <option key={r.id} value={r.id} className="bg-background text-foreground">
@@ -129,174 +177,292 @@ export default function DocsPage() {
             </select>
           </div>
 
-          <Button variant="outline" size="sm" onClick={downloadAllDocs} disabled={docList.length === 0}>
-            <Download className="h-4 w-4 mr-1.5" />Export All ({docList.length})
-          </Button>
-
-          <Button variant="outline" size="sm" onClick={() => docs.refetch()}>
-            <RefreshCw className="h-4 w-4 mr-1" />Refresh
-          </Button>
-
+          {/* Download as PDF Button */}
           <Button
             size="sm"
+            onClick={downloadAsPDF}
+            disabled={!doc?.content}
+            className="bg-blue-600 hover:bg-blue-700 text-white font-medium shadow-sm flex items-center gap-1.5"
+            title="Export as vector PDF via print engine"
+          >
+            <Printer className="h-4 w-4" />
+            Download as PDF
+          </Button>
+
+          {/* Download Markdown Button */}
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={downloadMarkdown}
+            disabled={!doc?.content}
+            className="flex items-center gap-1.5"
+            title="Download complete documentation as .md"
+          >
+            <Download className="h-4 w-4" />
+            Download .md
+          </Button>
+
+          {/* Copy Markdown */}
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={copyMarkdown}
+            disabled={!doc?.content}
+            title="Copy markdown text"
+          >
+            {copied ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
+          </Button>
+
+          {/* Regenerate Master Doc */}
+          <Button
+            size="sm"
+            variant="secondary"
             onClick={() => generateMutation.mutate()}
             disabled={generateMutation.isPending}
             className="flex items-center gap-1.5"
           >
-            {generateMutation.isPending ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Sparkles className="h-4 w-4 mr-1" />}
-            Generate Docs
+            {generateMutation.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin text-primary" />
+            ) : (
+              <Sparkles className="h-4 w-4 text-primary" />
+            )}
+            {generateMutation.isPending ? 'Rebuilding...' : 'Regenerate'}
           </Button>
         </div>
       </div>
 
-      {/* Search Bar */}
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-        <input
-          value={searchTerm}
-          onChange={e => setSearchTerm(e.target.value)}
-          placeholder={`Search ${docList.length} documents across ${currentRepo?.name || 'repository'}...`}
-          className="w-full pl-9 rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        />
-      </div>
-
-      {/* Document Detail Modal */}
-      {selectedDoc && (
-        <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <Card className="w-full max-w-4xl max-h-[88vh] flex flex-col shadow-2xl border-primary/30">
-            <CardHeader className="flex flex-row items-center justify-between border-b pb-4">
-              <div>
-                <CardTitle className="text-xl flex items-center gap-2">
-                  <FileText className="h-5 w-5 text-primary" />
-                  {selectedDoc.title}
-                </CardTitle>
-                <CardDescription className="font-mono text-xs mt-1">
-                  Type: <span className="text-foreground capitalize">{selectedDoc.doc_type}</span> • Path: <code className="bg-muted px-1.5 py-0.5 rounded">{selectedDoc.file_path || 'Root'}</code>
-                </CardDescription>
-              </div>
-              <div className="flex items-center gap-2">
-                <Button size="sm" variant="outline" onClick={() => copyToClipboard(selectedDoc.content || '')} title="Copy Markdown">
-                  {copied ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
-                </Button>
-                <Button size="sm" variant="outline" onClick={() => downloadDoc(selectedDoc)} title="Download Markdown File">
-                  <Download className="h-4 w-4" />
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => setSelectedDoc(null)}>
-                  <X className="h-4 w-4" />
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent className="overflow-y-auto p-6 flex-1 space-y-4">
-              <div className="prose dark:prose-invert max-w-none text-sm leading-relaxed prose-table:border prose-table:border-border prose-th:bg-muted/50 prose-th:p-2 prose-td:p-2 prose-td:border-t prose-td:border-border prose-pre:bg-muted prose-pre:text-foreground prose-code:text-primary prose-headings:text-foreground">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                  {selectedDoc.content || selectedDoc.summary || 'No detailed content available for this document.'}
-                </ReactMarkdown>
-              </div>
-            </CardContent>
-          </Card>
+      {/* Loading Skeleton */}
+      {masterDocQuery.isLoading ? (
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+          <div className="md:col-span-1 space-y-3">
+            {[1, 2, 3, 4, 5].map((i) => (
+              <Skeleton key={i} className="h-10 w-full" />
+            ))}
+          </div>
+          <div className="md:col-span-3 space-y-4">
+            <Skeleton className="h-28 w-full" />
+            <Skeleton className="h-64 w-full" />
+            <Skeleton className="h-48 w-full" />
+          </div>
         </div>
-      )}
-
-      {docs.isLoading ? (
-        <div className="space-y-4">
-          {[1, 2, 3, 4].map(i => <Skeleton key={i} className="h-32" />)}
-        </div>
+      ) : !doc?.content ? (
+        /* Empty State */
+        <Card className="border-dashed">
+          <CardContent className="p-12 text-center space-y-4">
+            <FileText className="h-12 w-12 text-muted-foreground mx-auto" />
+            <div className="space-y-1">
+              <h3 className="text-lg font-semibold">No Master Documentation Found</h3>
+              <p className="text-sm text-muted-foreground max-w-md mx-auto">
+                Generate a unified, comprehensive technical dossier covering everything about{' '}
+                <span className="font-semibold text-foreground">{currentRepo?.name}</span>.
+              </p>
+            </div>
+            <Button
+              onClick={() => generateMutation.mutate()}
+              disabled={generateMutation.isPending}
+              className="gap-2"
+            >
+              {generateMutation.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Sparkles className="h-4 w-4" />
+              )}
+              Generate Master Project Documentation
+            </Button>
+          </CardContent>
+        </Card>
       ) : (
-        <Tabs defaultValue="all">
-          <TabsList className="flex flex-wrap h-auto gap-1">
-            <TabsTrigger value="all">All ({filtered.length})</TabsTrigger>
-            {docTypes.map(t => (
-              <TabsTrigger key={t} value={t} className="capitalize">
-                {t} ({docList.filter((d: any) => d.doc_type === t).length})
-              </TabsTrigger>
-            ))}
-          </TabsList>
+        /* Main Two-Column Layout */
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+          {/* Left Column: Sticky Table of Contents & Telemetry (lg:col-span-4) */}
+          <div className="no-print lg:col-span-4 space-y-4 sticky top-6">
+            {/* Quick Metadata Box */}
+            <Card className="border-primary/20 shadow-sm bg-card/60 backdrop-blur-sm">
+              <CardHeader className="pb-3 pt-4 px-4 border-b">
+                <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                  <BookOpen className="h-4 w-4 text-primary" />
+                  Repository Dossier Overview
+                </CardTitle>
+                <CardDescription className="text-xs">
+                  Updated {doc.updated_at ? new Date(doc.updated_at).toLocaleString() : 'Recently'}
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="p-4 space-y-3">
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div className="p-2.5 bg-muted/50 rounded-lg">
+                    <span className="text-muted-foreground block text-[11px]">Tracked Files</span>
+                    <span className="text-sm font-bold text-foreground">
+                      {currentRepo?.total_files || 'Cataloged'} files
+                    </span>
+                  </div>
+                  <div className="p-2.5 bg-muted/50 rounded-lg">
+                    <span className="text-muted-foreground block text-[11px]">Knowledge Graph</span>
+                    <span className="text-sm font-bold text-primary">
+                      {currentRepo?.graph_nodes || 0} entities
+                    </span>
+                  </div>
+                  <div className="p-2.5 bg-muted/50 rounded-lg">
+                    <span className="text-muted-foreground block text-[11px]">Graph Relations</span>
+                    <span className="text-sm font-bold text-foreground">
+                      {currentRepo?.graph_relationships || 0} edges
+                    </span>
+                  </div>
+                  <div className="p-2.5 bg-muted/50 rounded-lg">
+                    <span className="text-muted-foreground block text-[11px]">Documentation</span>
+                    <span className="text-sm font-bold text-green-600 dark:text-green-400">
+                      1 Master Doc
+                    </span>
+                  </div>
+                </div>
 
-          <TabsContent value="all" className="space-y-4 mt-4">
-            {filtered.length === 0 ? (
-              <Card>
-                <CardContent className="p-8 text-center space-y-3">
-                  <FileText className="h-10 w-10 text-muted-foreground mx-auto" />
-                  <p className="text-muted-foreground font-medium">No documentation found for {currentRepo?.name}.</p>
-                  <Button onClick={() => generateMutation.mutate()} disabled={generateMutation.isPending}>
-                    {generateMutation.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Sparkles className="h-4 w-4 mr-2" />}
-                    Generate Full Documentation Now
+                <div className="pt-1">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={downloadAsPDF}
+                    className="w-full text-xs gap-1.5 border-blue-200 dark:border-blue-900 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/50"
+                  >
+                    <Printer className="h-3.5 w-3.5" />
+                    Download / Print as PDF
                   </Button>
-                </CardContent>
-              </Card>
-            ) : filtered.map((doc: any) => (
-              <Card key={doc.id} className="hover:border-primary/50 transition-colors">
-                <CardHeader className="flex flex-row items-center justify-between pb-2">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-primary/10 rounded-lg text-primary">
-                      <BookOpen className="h-5 w-5" />
-                    </div>
-                    <div>
-                      <CardTitle className="text-base flex items-center gap-2">
-                        {doc.title}
-                      </CardTitle>
-                      <CardDescription className="text-xs font-mono">
-                        {doc.file_path || doc.entity_name || 'Repository Root'}
-                      </CardDescription>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Badge variant="outline" className="capitalize">{doc.doc_type}</Badge>
-                    <Button size="sm" variant="outline" onClick={() => downloadDoc(doc)} title="Download Markdown">
-                      <Download className="h-3.5 w-3.5 mr-1" />Download .md
-                    </Button>
-                    <Button size="sm" variant="secondary" onClick={() => setSelectedDoc(doc)}>
-                      <Eye className="h-3.5 w-3.5 mr-1" />Read Full Doc
-                    </Button>
-                  </div>
-                </CardHeader>
-                <CardContent className="pt-2">
-                  <div className="text-xs text-muted-foreground line-clamp-2 bg-muted/30 p-2.5 rounded font-mono">
-                    {doc.summary || doc.content?.split('\n').filter((l: string) => l.trim() && !l.startsWith('#')).slice(0, 2).join(' ') || 'Documentation generated from AST parsing.'}
-                  </div>
-                  <div className="flex items-center justify-between mt-2 text-xs text-muted-foreground">
-                    <span>Target: <code className="text-foreground">{doc.file_path || 'Repository root'}</code></span>
-                    <span>v{doc.version || 1} • {doc.created_at?.slice(0, 10)}</span>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </TabsContent>
+                </div>
+              </CardContent>
+            </Card>
 
-          {docTypes.map(t => (
-            <TabsContent key={t} value={t} className="space-y-4 mt-4">
-              {filtered.filter((d: any) => d.doc_type === t).map((doc: any) => (
-                <Card key={doc.id} className="hover:border-primary/50 transition-colors">
-                  <CardHeader className="flex flex-row items-center justify-between pb-2">
-                    <div className="flex items-center gap-3">
-                      <div className="p-2 bg-primary/10 rounded-lg text-primary">
-                        <BookOpen className="h-5 w-5" />
-                      </div>
-                      <div>
-                        <CardTitle className="text-base">{doc.title}</CardTitle>
-                        <CardDescription className="text-xs font-mono">{doc.file_path || 'Root'}</CardDescription>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Button size="sm" variant="outline" onClick={() => downloadDoc(doc)}>
-                        <Download className="h-3.5 w-3.5 mr-1" />Download
-                      </Button>
-                      <Button size="sm" variant="secondary" onClick={() => setSelectedDoc(doc)}>
-                        <Eye className="h-3.5 w-3.5 mr-1" />Read
-                      </Button>
-                    </div>
-                  </CardHeader>
-                  <CardContent className="pt-2">
-                    <div className="text-xs text-muted-foreground line-clamp-2 bg-muted/30 p-2.5 rounded font-mono">
-                      {doc.summary || doc.content?.split('\n').filter((l: string) => l.trim() && !l.startsWith('#')).slice(0, 2).join(' ') || 'Documentation generated from AST parsing.'}
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </TabsContent>
-          ))}
-        </Tabs>
+            {/* Table of Contents Chapters */}
+            <Card className="shadow-sm">
+              <CardHeader className="pb-2 pt-4 px-4 border-b">
+                <CardTitle className="text-xs uppercase tracking-wider text-muted-foreground font-semibold flex items-center justify-between">
+                  <span>Table of Contents</span>
+                  <span className="font-mono text-[10px] lowercase text-primary font-normal">
+                    {sections.length} chapters
+                  </span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-2 max-h-[calc(100vh-320px)] overflow-y-auto space-y-0.5">
+                {sections.length > 0 ? (
+                  sections.map((sec: any, idx: number) => {
+                    const isActive = activeSection === idx
+                    return (
+                      <button
+                        key={sec.id || idx}
+                        onClick={() => scrollToChapter(idx)}
+                        className={`w-full text-left px-3 py-2 rounded-md text-xs font-medium transition-colors flex items-center justify-between group ${
+                          isActive
+                            ? 'bg-primary text-primary-foreground shadow-sm'
+                            : 'text-muted-foreground hover:text-foreground hover:bg-muted/60'
+                        }`}
+                      >
+                        <span className="truncate pr-2">{sec.title}</span>
+                        <ChevronRight
+                          className={`h-3 w-3 shrink-0 transition-transform ${
+                            isActive ? 'text-primary-foreground' : 'opacity-0 group-hover:opacity-100'
+                          }`}
+                        />
+                      </button>
+                    )
+                  })
+                ) : (
+                  <p className="text-xs text-muted-foreground p-3">Sections indexing...</p>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Right Column: Full Master Document Reader (lg:col-span-8) */}
+          <div className="lg:col-span-8 space-y-6">
+            <Card className="border shadow-md">
+              <CardHeader className="border-b bg-card pb-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <CardTitle className="text-xl md:text-2xl font-bold flex items-center gap-2">
+                      <FileCheck className="h-6 w-6 text-primary" />
+                      {doc.title}
+                    </CardTitle>
+                    <CardDescription className="text-xs font-mono mt-1">
+                      Repository ID: <code className="text-foreground">{doc.repository_id}</code> • Type:{' '}
+                      <span className="text-foreground font-semibold uppercase">{doc.doc_type}</span> • Format:{' '}
+                      <span className="text-foreground uppercase">{doc.format}</span>
+                    </CardDescription>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <Badge variant="outline" className="text-xs bg-muted">
+                      v{doc.version || 1}.0
+                    </Badge>
+                    <Button size="sm" variant="ghost" onClick={copyMarkdown} title="Copy Markdown">
+                      {copied ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
+                    </Button>
+                  </div>
+                </div>
+              </CardHeader>
+
+              <CardContent className="p-6 md:p-8">
+                {/* Render full Master Markdown Document */}
+                <article className="prose dark:prose-invert max-w-none text-sm md:text-base leading-relaxed break-words
+                  prose-headings:font-bold prose-headings:tracking-tight prose-headings:text-foreground
+                  prose-h1:text-2xl prose-h1:border-b prose-h1:pb-3 prose-h1:mb-6
+                  prose-h2:text-xl prose-h2:border-b prose-h2:pb-2 prose-h2:mt-10 prose-h2:mb-4 prose-h2:text-primary
+                  prose-h3:text-base prose-h3:mt-6 prose-h3:mb-2 prose-h3:text-foreground
+                  prose-p:text-muted-foreground prose-p:leading-relaxed
+                  prose-table:border prose-table:border-border prose-table:my-6 prose-table:text-xs md:prose-table:text-sm
+                  prose-th:bg-muted/80 prose-th:p-2.5 prose-th:text-foreground prose-th:font-semibold prose-th:border prose-th:border-border
+                  prose-td:p-2.5 prose-td:border prose-td:border-border prose-td:text-muted-foreground
+                  prose-tr:even:bg-muted/20
+                  prose-code:text-primary prose-code:bg-muted prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:font-mono prose-code:text-xs
+                  prose-pre:bg-slate-900 prose-pre:text-slate-100 prose-pre:p-4 prose-pre:rounded-lg prose-pre:border prose-pre:border-border
+                  prose-blockquote:border-l-4 prose-blockquote:border-primary prose-blockquote:bg-muted/30 prose-blockquote:py-2 prose-blockquote:px-4 prose-blockquote:rounded-r prose-blockquote:italic
+                  prose-li:text-muted-foreground prose-li:my-1
+                  prose-hr:my-8 prose-hr:border-border">
+                  <ReactMarkdown
+                    remarkPlugins={[remarkGfm]}
+                    components={{
+                      h2: ({ node, children, ...props }) => {
+                        // Extract chapter index to provide anchor id for Table of Contents
+                        const text = String(children || '')
+                        const match = text.match(/^(\d+)\./)
+                        const chapterIdx = match ? parseInt(match[1], 10) - 1 : undefined
+                        return (
+                          <h2
+                            id={chapterIdx !== undefined ? `chapter-${chapterIdx}` : undefined}
+                            className="scroll-mt-20 group flex items-center justify-between"
+                            {...props}
+                          >
+                            <span>{children}</span>
+                            <a
+                              href={`#chapter-${chapterIdx}`}
+                              className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-primary text-xs"
+                              title="Direct link to chapter"
+                            >
+                              #
+                            </a>
+                          </h2>
+                        )
+                      },
+                    }}
+                  >
+                    {doc.content}
+                  </ReactMarkdown>
+                </article>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
       )}
     </div>
+  )
+}
+
+export default function DocsPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="p-6 space-y-4">
+          <Skeleton className="h-12 w-64" />
+          <Skeleton className="h-96 w-full" />
+        </div>
+      }
+    >
+      <DocsContent />
+    </Suspense>
   )
 }

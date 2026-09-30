@@ -96,12 +96,80 @@ def scan_repository(
     "/repositories",
     response_model=list[RepositoryResponse],
     summary="List all repositories",
-    description="Retrieve a list of all connected repositories.",
+    description="Retrieve a list of all active repositories enriched with real-time sync and graph status.",
 )
 def list_repositories(
+    db: Session = Depends(get_db),
     service: RepositoryService = Depends(_get_service),
 ):
-    return service.get_all_repositories()
+    from app.models.github import ConnectedRepository
+    from app.models.repository import ProgrammingLanguage
+    from app.db.neo4j import get_neo4j_client
+
+    repos = service.get_all_repositories()
+
+    # Query active connected repos
+    conn_map: dict[int, ConnectedRepository] = {}
+    try:
+        conns = db.query(ConnectedRepository).filter(ConnectedRepository.is_active.is_(True)).all()
+        for cr in conns:
+            if cr.repository_id:
+                conn_map[cr.repository_id] = cr
+    except Exception as e:
+        logger.debug(f"Failed to query connected repositories: {e}")
+
+    # Query graph statistics per repository from Neo4j
+    graph_map: dict[int, dict] = {}
+    try:
+        neo = get_neo4j_client()
+        if neo.driver:
+            with neo.get_session() as session:
+                res = session.run("""
+                    MATCH (n) WHERE n.repository_id IS NOT NULL
+                    OPTIONAL MATCH (n)-[r]->()
+                    RETURN n.repository_id AS repo_id, count(DISTINCT n) AS nodes, count(DISTINCT r) AS rels
+                """)
+                for row in res:
+                    graph_map[row["repo_id"]] = {
+                        "nodes": row["nodes"],
+                        "rels": row["rels"],
+                    }
+    except Exception as e:
+        logger.debug(f"Failed to query neo4j stats for repositories list: {e}")
+
+    results = []
+    for r in repos:
+        cr = conn_map.get(r.id)
+        latest_scan = service.get_latest_scan(r.id)
+        gm = graph_map.get(r.id, {"nodes": 0, "rels": 0})
+
+        langs = [
+            l.name for l in db.query(ProgrammingLanguage).filter(ProgrammingLanguage.repository_id == r.id).all()
+        ]
+
+        resp = RepositoryResponse(
+            id=r.id,
+            name=r.name,
+            url=r.url,
+            local_path=r.local_path,
+            default_branch=r.default_branch,
+            description=r.description,
+            is_active=r.is_active,
+            created_at=r.created_at,
+            updated_at=r.updated_at,
+            sync_status=cr.sync_status if cr else ("synced" if len(r.files) > 0 else "idle"),
+            last_synced_at=cr.last_synced_at if cr and cr.last_synced_at else (latest_scan.completed_at if latest_scan else r.updated_at),
+            github_connected=bool(cr),
+            github_repo_id=cr.id if cr else None,
+            github_full_name=cr.full_name if cr else None,
+            total_files=len(r.files),
+            total_scans=len(r.scans),
+            languages=langs,
+            graph_nodes=gm["nodes"],
+            graph_relationships=gm["rels"],
+        )
+        results.append(resp)
+    return results
 
 
 @router.get(

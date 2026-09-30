@@ -50,6 +50,70 @@ def generate_documentation(
 
 
 @router.get(
+    "/repositories/{repository_id}/documentation/master",
+    response_model=DocumentationDetail,
+    summary="Get master project documentation",
+    description="Retrieve the unified master project documentation for a repository.",
+)
+def get_master_documentation(
+    repository_id: int,
+    service: DocumentationService = Depends(_get_service),
+):
+    doc = service.get_master_documentation(repository_id)
+    if not doc:
+        # Auto-generate if not yet generated
+        service.generate_master_documentation(repository_id)
+        doc = service.get_master_documentation(repository_id)
+    if not doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Master documentation not found")
+
+    return DocumentationDetail(
+        id=doc.id, repository_id=doc.repository_id, doc_type=doc.doc_type,
+        title=doc.title, slug=doc.slug, entity_type=doc.entity_type,
+        entity_name=doc.entity_name, file_path=doc.file_path,
+        content=doc.content, summary=doc.summary, format=doc.format,
+        is_published=doc.is_published, version=doc.version, language=doc.language,
+        created_at=doc.created_at, updated_at=doc.updated_at,
+        sections=[
+            DocumentationSectionDetail(
+                id=s.id, title=s.title, content=s.content,
+                section_order=s.section_order, section_type=s.section_type, level=s.level,
+            )
+            for s in doc.sections
+        ],
+    )
+
+
+@router.get(
+    "/repositories/{repository_id}/documentation/master/export",
+    summary="Export master project documentation",
+    description="Export the master project documentation as printable HTML (PDF ready) or raw Markdown.",
+)
+def export_master_documentation_endpoint(
+    repository_id: int,
+    format: str = "markdown",
+    service: DocumentationService = Depends(_get_service),
+):
+    exported = service.export_master_documentation(repository_id, format)
+    if not exported:
+        service.generate_master_documentation(repository_id)
+        exported = service.export_master_documentation(repository_id, format)
+    if not exported:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Master documentation not available for export")
+
+    if format in ["html", "pdf"]:
+        from fastapi.responses import HTMLResponse
+        return HTMLResponse(content=exported["content"])
+    else:
+        from fastapi.responses import PlainTextResponse
+        return PlainTextResponse(
+            content=exported["content"],
+            media_type="text/markdown; charset=utf-8",
+            headers={"Content-Disposition": f"attachment; filename=\"{exported['filename']}\""},
+        )
+
+
+@router.get(
     "/repositories/{repository_id}/documentation",
     response_model=list[DocumentationListItem],
     summary="List documentation",
